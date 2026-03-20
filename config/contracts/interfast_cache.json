@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "name": "interfast_cache",
+  "description": "Dump debug des objets Interfast bruts. La lecture applicative passe par SQLite.",
+  "fields": {
+    "entity_type": "string",
+    "items": "array<object>",
+    "synced_at": "timestamp"
+  }
+}

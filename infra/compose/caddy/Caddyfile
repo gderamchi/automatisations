@@ -1,0 +1,9 @@
+:80 {
+    encode gzip
+
+    @api {
+        path /internal/* /healthz /docs /openapi.json /validate/* /dashboard /files/*
+    }
+
+    reverse_proxy @api api:8080
+}

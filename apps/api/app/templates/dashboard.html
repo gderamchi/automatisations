@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+    <title>Dashboard Automatisations</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Pilotage NAS-first</p>
+          <h1>Dashboard exploitation</h1>
+          <p class="lead">Vue rapide sur les documents, validations, exports, anomalies bancaires et DOE.</p>
+        </div>
+      </section>
+
+      <section class="metrics-grid">
+        <article class="metric-card">
+          <span>Total documents</span>
+          <strong>{{ metrics.documents_total }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>En validation</span>
+          <strong>{{ metrics.documents_pending_validation }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>Rejetés</span>
+          <strong>{{ metrics.documents_rejected }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>Exports en attente</span>
+          <strong>{{ metrics.exports_pending }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>Anomalies bancaires</span>
+          <strong>{{ metrics.bank_anomalies }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>DOE incomplets</span>
+          <strong>{{ metrics.doe_incomplete }}</strong>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Validations en attente</h2>
+        </div>
+        {% if pending_tasks %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Document</th>
+              <th>Fournisseur</th>
+              <th>Facture</th>
+              <th>Confiance OCR</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for task in pending_tasks %}
+            <tr>
+              <td>#{{ task.document_id }} · {{ task.source_name }}</td>
+              <td>{{ task.supplier_name or "-" }}</td>
+              <td>{{ task.invoice_number or "-" }}</td>
+              <td>{{ task.confidence }}</td>
+              <td><a class="button" href="/validate/{{ task.token }}">Ouvrir</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p>Aucune validation en attente.</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

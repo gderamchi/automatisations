@@ -1,0 +1,25 @@
+{
+  "template_id": "purchase_invoice_default",
+  "document_type": "purchase_invoice",
+  "journal": "{{journal}}",
+  "lines": [
+    {
+      "side": "debit",
+      "account_code": "{{compte_charge}}",
+      "amount_field": "net_amount",
+      "label": "Achat {{supplier_name}} {{invoice_number}}"
+    },
+    {
+      "side": "debit",
+      "account_code": "{{compte_tva}}",
+      "amount_field": "vat_amount",
+      "label": "TVA {{invoice_number}}"
+    },
+    {
+      "side": "credit",
+      "account_code": "{{compte_tiers}}",
+      "amount_field": "gross_amount",
+      "label": "Facture {{invoice_number}}"
+    }
+  ]
+}

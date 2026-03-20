@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "name": "ocr_normalized",
+  "description": "Contrat canonique stocke dans SQLite et archive normalisee pour les factures OCR.",
+  "fields": {
+    "document_type": "purchase_invoice | sales_invoice | credit_note | unknown",
+    "supplier_name": "string|null",
+    "supplier_siret": "string|null",
+    "invoice_number": "string|null",
+    "invoice_date": "YYYY-MM-DD|null",
+    "due_date": "YYYY-MM-DD|null",
+    "currency": "ISO-4217",
+    "net_amount": "decimal|null",
+    "vat_amount": "decimal|null",
+    "gross_amount": "decimal|null",
+    "line_items": "array",
+    "project_ref": "string|null",
+    "confidence": "float",
+    "source_file_id": "integer|null",
+    "raw_text": "string|null",
+    "missing_fields": "array"
+  }
+}

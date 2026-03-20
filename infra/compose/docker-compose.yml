@@ -1,0 +1,76 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    env_file:
+      - ../../.env
+    environment:
+      DATA_ROOT: /data
+      DB_PATH: /data/state/sqlite/automation.db
+    command: uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../n8n:/app/n8n:ro
+      - ../../docs:/app/docs:ro
+      - ../../scripts:/app/scripts:ro
+      - automation_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    env_file:
+      - ../../.env
+    environment:
+      DATA_ROOT: /data
+      DB_PATH: /data/state/sqlite/automation.db
+    command: python -m apps.workers.cli init-db
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../scripts:/app/scripts:ro
+      - automation_data:/data
+    restart: "no"
+
+  n8n:
+    image: n8nio/n8n:1.98.2
+    env_file:
+      - ../../.env
+    environment:
+      N8N_PORT: 5678
+      N8N_HOST: 0.0.0.0
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_BINARY_DATA_STORAGE_PATH: /data/binary
+      N8N_SECURE_COOKIE: "false"
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - automation_data:/data
+      - ../../n8n/workflows:/workflows:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2.10.0
+    profiles: ["edge"]
+    ports:
+      - "80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  automation_data:
+  n8n_data:

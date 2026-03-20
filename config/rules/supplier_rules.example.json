@@ -1,0 +1,26 @@
+[
+  {
+    "rule_key": "acme-btp",
+    "supplier_match": "ACME BTP",
+    "compte_charge": "604000",
+    "compte_tva": "445660",
+    "compte_tiers": "401000",
+    "journal": "ACH",
+    "confidence_threshold": 0.8,
+    "metadata": {
+      "compte_produit": "706000"
+    }
+  },
+  {
+    "rule_key": "vente-generique",
+    "supplier_match": "CLIENT",
+    "compte_charge": "604000",
+    "compte_tva": "445710",
+    "compte_tiers": "411000",
+    "journal": "VEN",
+    "confidence_threshold": 0.75,
+    "metadata": {
+      "compte_produit": "706000"
+    }
+  }
+]

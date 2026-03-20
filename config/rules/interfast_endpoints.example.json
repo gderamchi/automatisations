@@ -1,0 +1,35 @@
+{
+  "headers": {
+    "Accept": "application/json"
+  },
+  "entities": {
+    "client_invoices": {
+      "path": "/api/client-invoices",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updated_at",
+      "updated_after_param": "updated_after"
+    },
+    "quotes": {
+      "path": "/api/quotes",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updated_at",
+      "updated_after_param": "updated_after"
+    },
+    "payments": {
+      "path": "/api/payments",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updated_at",
+      "updated_after_param": "updated_after"
+    },
+    "projects": {
+      "path": "/api/projects",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updated_at",
+      "updated_after_param": "updated_after"
+    }
+  }
+}

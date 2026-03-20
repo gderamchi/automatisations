@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "name": "entry_template",
+  "description": "Template d'ecriture a placeholders rendu par le worker Python.",
+  "fields": {
+    "template_id": "string",
+    "document_type": "string",
+    "journal": "string with {{placeholder}} support",
+    "lines": [
+      {
+        "side": "debit|credit",
+        "account_code": "string with {{placeholder}} support",
+        "amount_field": "string",
+        "label": "string with {{placeholder}} support"
+      }
+    ]
+  }
+}

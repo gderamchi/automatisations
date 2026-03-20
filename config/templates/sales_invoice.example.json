@@ -1,0 +1,25 @@
+{
+  "template_id": "sales_invoice_default",
+  "document_type": "sales_invoice",
+  "journal": "{{journal}}",
+  "lines": [
+    {
+      "side": "debit",
+      "account_code": "{{compte_tiers}}",
+      "amount_field": "gross_amount",
+      "label": "Client {{invoice_number}}"
+    },
+    {
+      "side": "credit",
+      "account_code": "{{compte_produit}}",
+      "amount_field": "net_amount",
+      "label": "Vente {{invoice_number}}"
+    },
+    {
+      "side": "credit",
+      "account_code": "{{compte_tva}}",
+      "amount_field": "vat_amount",
+      "label": "TVA collectee {{invoice_number}}"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "name": "accounting_rule",
+  "description": "Regle de matching comptable fournisseur vers comptes et journal.",
+  "fields": {
+    "rule_key": "string",
+    "supplier_match": "string",
+    "compte_charge": "string",
+    "compte_tva": "string",
+    "compte_tiers": "string",
+    "journal": "string",
+    "confidence_threshold": "float",
+    "metadata": "object"
+  }
+}
