@@ -15,7 +15,16 @@ from apps.workers.common.settings import Settings, get_settings
 from apps.workers.connectors.mistral_client import MistralOCRClient
 
 
-DATE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d")
+DATE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d")
+
+NOISY_SUPPLIER_LINES = {
+    "# payé",
+    "payé",
+    "# paid",
+    "paid",
+    "facture",
+    "invoice",
+}
 
 
 def parse_french_decimal(raw: str | None) -> Decimal | None:
@@ -44,6 +53,12 @@ def parse_date_value(raw: str | None) -> date | None:
     return None
 
 
+def normalize_space(value: str | None) -> str | None:
+    if not value:
+        return None
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def first_pattern(text: str, patterns: list[str]) -> str | None:
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
@@ -53,12 +68,24 @@ def first_pattern(text: str, patterns: list[str]) -> str | None:
 
 
 def extract_supplier_name(text: str) -> str | None:
+    priority_patterns = [
+        r"TVA déclarée par\s+([^\n]+)",
+        r"(?:émise par|emise par|issued by|facturé par|facture émise par)\s*([^\n]+)",
+        r"Vendu par\s+([^\n]+)",
+    ]
+    for pattern in priority_patterns:
+        candidate = normalize_space(first_pattern(text, [pattern]))
+        if candidate and candidate.lower() not in NOISY_SUPPLIER_LINES:
+            return candidate[:150]
+
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         lowered = stripped.lower()
-        if any(keyword in lowered for keyword in ("facture", "invoice", "page", "tva", "siret")):
+        if lowered in NOISY_SUPPLIER_LINES:
+            continue
+        if any(keyword in lowered for keyword in ("facture", "invoice", "page", "tva", "siret", "date de", "numéro de", "numero de")):
             continue
         return stripped[:150]
     return None
@@ -80,7 +107,53 @@ def compute_confidence(payload: OCRNormalized) -> float:
         score += 0.05
     if payload.supplier_siret:
         score += 0.05
+    if payload.project_ref:
+        score += 0.03
     return round(min(score, 0.99), 2)
+
+
+def extract_document_insights(text: str) -> dict[str, str]:
+    insights: dict[str, str] = {}
+    patterns = {
+        "payment_status": [
+            r"#\s*(Payé|Paid|Impayé|Unpaid)\b",
+            r"\b(Payé|Paid|Impayé|Unpaid)\b",
+        ],
+        "payment_reference": [
+            r"Référence de paiement\s+([A-Z0-9-]+)",
+            r"Payment reference\s+([A-Z0-9-]+)",
+        ],
+        "order_number": [
+            r"Numéro de la commande\s+([A-Z0-9-]+)",
+            r"Order number\s+([A-Z0-9-]+)",
+        ],
+        "seller_name": [
+            r"Vendu par\s+([^\n]+)",
+        ],
+        "issuer_name": [
+            r"TVA déclarée par\s+([^\n]+)",
+            r"([A-Z][A-Za-z0-9 .,'àâçéèêëîïôûùüÿñæœ&/-]{3,}S(?:\.| )?a(?:\.| )?r(?:\.| )?l\.?)",
+        ],
+    }
+    for key, key_patterns in patterns.items():
+        candidate = normalize_space(first_pattern(text, key_patterns))
+        if candidate:
+            insights[key] = candidate
+    return insights
+
+
+def extract_table_totals(text: str) -> tuple[Decimal | None, Decimal | None]:
+    matches = list(
+        re.finditer(
+            r"\|\s*(?:\d+\s*%|Total)\s*\|\s*([0-9\s.,]+)\s*€?\s*\|\s*([0-9\s.,]+)\s*€?\s*\|",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    )
+    if not matches:
+        return None, None
+    match = matches[-1]
+    return parse_french_decimal(match.group(1)), parse_french_decimal(match.group(2))
 
 
 def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | None = None) -> OCRNormalized:
@@ -95,6 +168,7 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
     invoice_number = first_pattern(
         text,
         [
+            r"(?:num[eé]ro de la facture|invoice number|facture number)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/_.-]{2,})",
             r"^(?:facture|invoice)\s*(?:n(?:[°o])?|num(?:ero)?)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/_-]{2,})\s*$",
             r"(?:ref(?:erence)?|pi[eè]ce)\s*[:#\s-]*([A-Z0-9][A-Z0-9\/_-]{2,})",
         ],
@@ -103,7 +177,8 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
         first_pattern(
             text,
             [
-                r"(?:date(?: de)? facture|date d['’]emission|date)\s*[:#-]?\s*([0-9]{2}[/-][0-9]{2}[/-][0-9]{4})",
+                r"date de la facture(?:\s*/\s*date de\s*la livraison)?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
+                r"(?:date(?: de)? facture|date d['’]emission|date de la facture/date de la livraison|date de la facture|date de livraison|date)\s*[:#-]?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
             ],
         )
     )
@@ -121,6 +196,7 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
             [
                 r"^(?:total\s+ttc|montant\s+ttc|net\s+a\s+payer)\s*[:#-]?\s*([0-9\s.,]+)\s*$",
                 r"^total\s*[:#-]?\s*([0-9\s.,]+)\s*$",
+                r"(?:total à payer|facture total)\s*[:#-]?\s*([0-9\s.,]+)\s*[€EUR]*",
             ],
         )
     )
@@ -140,6 +216,10 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
             ],
         )
     )
+    if net_amount is None or vat_amount is None:
+        table_net, table_vat = extract_table_totals(text)
+        net_amount = net_amount or table_net
+        vat_amount = vat_amount or table_vat
     project_ref = first_pattern(
         text,
         [

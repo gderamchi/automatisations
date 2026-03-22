@@ -20,6 +20,15 @@ def test_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "test-token")
     monkeypatch.setenv("VALIDATION_USERNAME", "validator")
     monkeypatch.setenv("VALIDATION_PASSWORD", "secret")
+    monkeypatch.setenv("IMAP_USERNAME", "inbox@example.com")
+    monkeypatch.setenv("IMAP_PASSWORD", "imap-secret")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USERNAME", "inbox@example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-secret")
+    monkeypatch.setenv("SMTP_FROM", "inbox@example.com")
+    monkeypatch.setenv("REPLY_TO_EMAIL", "owner@example.com")
+    monkeypatch.setenv("MAIL_REPLY_SUBJECT_PREFIX", "[AUTOMATISATIONS OCR]")
+    monkeypatch.setenv("MAIL_BOOTSTRAP_CURRENT_UID", "false")
     get_settings.cache_clear()
     settings = get_settings()
     init_db(settings)
@@ -69,5 +78,23 @@ def incomplete_invoice_text() -> str:
             "Fournisseur Test",
             "FACTURE",
             "Merci pour votre confiance",
+        ]
+    )
+
+
+@pytest.fixture()
+def amazon_paid_invoice_text() -> str:
+    return "\n".join(
+        [
+            "Facture",
+            "# Payé",
+            "Référence de paiement 13XOT2IZ9FQSE96V",
+            "Vendu par shenzhenshijiataixingyekejiyouxiangongsi",
+            "Date de la facture/Date de la livraison 12.02.2024",
+            "Numéro de la facture DS-ASE-INV-FR-2024-22544185",
+            "Total à payer 19,99 €",
+            "TVA déclarée par Amazon Services Europe S.a.r.L.",
+            "Numéro de la commande 407-6967530-0479500",
+            "Facture Total 19,99 €",
         ]
     )

@@ -44,6 +44,18 @@ def send_telegram_message(body: str, settings: Settings | None = None) -> dict[s
 
 
 def send_email(recipient: str, subject: str, body: str, settings: Settings | None = None) -> None:
+    send_email_with_options(recipient=recipient, subject=subject, body=body, settings=settings)
+
+
+def send_email_with_options(
+    recipient: str,
+    subject: str,
+    body: str,
+    *,
+    settings: Settings | None = None,
+    headers: dict[str, str] | None = None,
+    reply_to: str | None = None,
+) -> None:
     current = settings or get_settings()
     if not current.smtp_host:
         raise RuntimeError("SMTP_HOST is not configured")
@@ -51,6 +63,10 @@ def send_email(recipient: str, subject: str, body: str, settings: Settings | Non
     message["From"] = current.smtp_from
     message["To"] = recipient
     message["Subject"] = subject
+    if reply_to:
+        message["Reply-To"] = reply_to
+    for key, value in (headers or {}).items():
+        message[key] = value
     message.set_content(body)
 
     with smtplib.SMTP(current.smtp_host, current.smtp_port) as smtp:

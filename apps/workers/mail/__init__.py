@@ -1,0 +1,1 @@
+"""Local mail worker package."""

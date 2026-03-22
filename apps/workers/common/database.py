@@ -168,6 +168,29 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS processed_emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    processed_key TEXT NOT NULL UNIQUE,
+    mailbox_uid TEXT NOT NULL,
+    message_id TEXT,
+    sender TEXT,
+    subject TEXT,
+    attachment_index INTEGER NOT NULL,
+    attachment_filename TEXT NOT NULL,
+    attachment_sha256 TEXT NOT NULL,
+    document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    result_json TEXT,
+    error_text TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS worker_state (
+    state_key TEXT PRIMARY KEY,
+    state_value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS job_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_name TEXT NOT NULL,
@@ -185,6 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_accounting_entries_export_status ON accounting_en
 CREATE INDEX IF NOT EXISTS idx_interfast_entities_type ON interfast_entities(entity_type);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_status ON bank_transactions(status);
 CREATE INDEX IF NOT EXISTS idx_bank_matches_transaction ON bank_matches(bank_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_processed_emails_mailbox_uid ON processed_emails(mailbox_uid);
 """
 
 

@@ -14,6 +14,7 @@ from apps.workers.documents.ingest import ingest_document
 from apps.workers.documents.ocr_service import run_document_ocr
 from apps.workers.doe.service import rebuild_project_tree
 from apps.workers.exports.inexweb import export_inexweb
+from apps.workers.mail.worker import MailAutomationWorker
 from apps.workers.sync.interfast import sync_interfast
 
 
@@ -56,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     doe = subparsers.add_parser("rebuild-doe")
     doe.add_argument("--project-id", type=int, required=True)
 
+    mail = subparsers.add_parser("mail-worker")
+    mail.add_argument("--once", action="store_true")
+
     return parser
 
 
@@ -85,6 +89,12 @@ def main() -> None:
         _print(export_inexweb(output_path=args.output_path, settings=settings))
     elif args.command == "rebuild-doe":
         _print(rebuild_project_tree(args.project_id, settings=settings))
+    elif args.command == "mail-worker":
+        worker = MailAutomationWorker(settings=settings)
+        if args.once:
+            _print(worker.run_once())
+        else:
+            worker.run_forever()
     else:
         parser.error(f"Unknown command: {args.command}")
 
