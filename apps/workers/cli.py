@@ -14,7 +14,9 @@ from apps.workers.documents.ingest import ingest_document
 from apps.workers.documents.ocr_service import run_document_ocr
 from apps.workers.doe.service import rebuild_project_tree
 from apps.workers.exports.inexweb import export_inexweb
+from apps.workers.exports.weekly_accounting import send_weekly_accounting_email
 from apps.workers.mail.worker import MailAutomationWorker
+from apps.workers.routing.service import dispatch_document, ensure_routing_task
 from apps.workers.sync.interfast import sync_interfast
 
 
@@ -60,6 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
     mail = subparsers.add_parser("mail-worker")
     mail.add_argument("--once", action="store_true")
 
+    route = subparsers.add_parser("route-document")
+    route.add_argument("--document-id", type=int, required=True)
+
+    dispatch = subparsers.add_parser("dispatch-document")
+    dispatch.add_argument("--document-id", type=int, required=True)
+
+    subparsers.add_parser("weekly-accounting")
+
     return parser
 
 
@@ -95,6 +105,12 @@ def main() -> None:
             _print(worker.run_once())
         else:
             worker.run_forever()
+    elif args.command == "route-document":
+        _print(ensure_routing_task(args.document_id, force_refresh=True, settings=settings))
+    elif args.command == "dispatch-document":
+        _print(dispatch_document(args.document_id, settings=settings))
+    elif args.command == "weekly-accounting":
+        _print(send_weekly_accounting_email(settings=settings))
     else:
         parser.error(f"Unknown command: {args.command}")
 

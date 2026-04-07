@@ -29,7 +29,8 @@ def _load_document_payload(document_id: int, settings: Settings) -> dict[str, An
         row = connection.execute(
             """
             SELECT source_name, supplier_name, supplier_siret, invoice_number, invoice_date, due_date, currency,
-                   net_amount, vat_amount, gross_amount, project_ref, document_type, validated_payload_json, normalized_payload_json
+                   net_amount, vat_amount, gross_amount, project_ref, document_type, document_kind, supply_type,
+                   payment_status, payment_date, payment_method, final_filename, validated_payload_json, normalized_payload_json
             FROM documents
             WHERE id = ?
             """,
@@ -51,6 +52,12 @@ def _load_document_payload(document_id: int, settings: Settings) -> dict[str, An
     payload.setdefault("gross_amount", row["gross_amount"])
     payload.setdefault("project_ref", row["project_ref"])
     payload.setdefault("document_type", row["document_type"])
+    payload.setdefault("document_kind", row["document_kind"])
+    payload.setdefault("supply_type", row["supply_type"])
+    payload.setdefault("payment_status", row["payment_status"])
+    payload.setdefault("payment_date", row["payment_date"])
+    payload.setdefault("payment_method", row["payment_method"])
+    payload.setdefault("final_filename", row["final_filename"])
     return payload
 
 
@@ -76,7 +83,8 @@ def write_document_to_excel(document_id: int, mapping_name: str, settings: Setti
     current = settings or get_settings()
     init_db(current)
     mapping = load_json(_find_mapping(mapping_name, current))
-    workbook_path = Path(substitute_env(mapping["workbook_path"]).replace("${DATA_ROOT}", str(current.data_root)))
+    raw_path = mapping["workbook_path"].replace("${DATA_ROOT}", str(current.data_root))
+    workbook_path = Path(substitute_env(raw_path))
     workbook_path.parent.mkdir(parents=True, exist_ok=True)
     if not workbook_path.exists():
         raise FileNotFoundError(f"Workbook not found: {workbook_path}")
@@ -118,4 +126,28 @@ def write_document_to_excel(document_id: int, mapping_name: str, settings: Setti
         "workbook_path": str(workbook_path),
         "sheet": mapping["sheet"],
         "row": current_row,
+    }
+
+
+def write_document_bundle(
+    document_id: int,
+    mapping_names: list[str] | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    current = settings or get_settings()
+    names = mapping_names or list(current.default_excel_mappings)
+    results = [write_document_to_excel(document_id, mapping_name, settings=current) for mapping_name in names]
+    with get_connection(current) as connection:
+        connection.execute(
+            """
+            UPDATE documents
+            SET current_stage = 'excel_written', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (document_id,),
+        )
+        connection.commit()
+    return {
+        "document_id": document_id,
+        "mappings": results,
     }

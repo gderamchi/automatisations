@@ -1,4 +1,4 @@
-# POC local Gmail -> OCR -> reponse email
+# POC local Gmail -> OCR -> review -> dispatch
 
 ## Objectif
 
@@ -8,7 +8,9 @@ Faire tourner localement un worker Python qui:
 - récupère les pièces jointes
 - OCRise les fichiers via Mistral
 - extrait les champs utiles
-- envoie un email de retour avec le résumé extrait
+- ouvre une validation humaine des données OCR si besoin
+- ouvre une validation humaine de routage
+- classe et dispatch les documents validés
 
 ## Variables minimales
 
@@ -16,12 +18,6 @@ Faire tourner localement un worker Python qui:
 - `IMAP_PORT=993`
 - `IMAP_USERNAME=<compte gmail>`
 - `IMAP_PASSWORD=<mot de passe applicatif>`
-- `SMTP_HOST=smtp.gmail.com`
-- `SMTP_PORT=587`
-- `SMTP_USERNAME=<compte gmail>`
-- `SMTP_PASSWORD=<mot de passe applicatif>`
-- `SMTP_FROM=<compte gmail>`
-- `REPLY_TO_EMAIL=<adresse de retour>`
 - `MISTRAL_API_KEY=<clé OCR>`
 - `MAIL_POLL_SECONDS=30`
 - `MAIL_REPLY_SUBJECT_PREFIX=[AUTOMATISATIONS OCR]`
@@ -43,10 +39,11 @@ python -m apps.workers.cli mail-worker
 - Il marque les emails traités comme lus pour éviter les redoublements.
 - Il garde un état persistant dans SQLite via `processed_emails`.
 - Les pièces jointes et résultats OCR sont archivés dans `data/`.
+- Les documents auto-validés ou validés manuellement créent ensuite une tâche de routage.
+- Le dispatch final écrit sur le NAS, dans les classeurs Excel configurés et vers InterFast selon le mode actif.
 
 ## Limites du POC
 
-- Pas d'intégration à l'app chantier.
-- Pas de validation UI.
-- Pas de classification chantier avancée.
+- Le mode `expense` InterFast reste bloqué tant que l'endpoint privé exact n'est pas prouvé.
+- Le mode `attachment` InterFast suppose un objet cible existant et un upload compatible avec l'API publique.
 - Pas de traitement des formats bureautiques non supportés par le worker.

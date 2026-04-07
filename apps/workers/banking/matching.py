@@ -55,6 +55,17 @@ def score_match(transaction: dict[str, Any], document: dict[str, Any]) -> tuple[
     return score, rationale
 
 
+def _infer_payment_method(transaction: dict[str, Any]) -> str:
+    haystack = " ".join(filter(None, [transaction.get("label"), transaction.get("reference")])).lower()
+    if any(keyword in haystack for keyword in ("cb", "visa", "mastercard", "carte")):
+        return "card"
+    if "cheque" in haystack or "chèque" in haystack:
+        return "check"
+    if "prelevement" in haystack or "prélèvement" in haystack:
+        return "direct_debit"
+    return "bank_transfer"
+
+
 def match_bank_transactions(settings: Settings | None = None) -> dict[str, Any]:
     current = settings or get_settings()
     init_db(current)
@@ -121,6 +132,22 @@ def match_bank_transactions(settings: Settings | None = None) -> dict[str, Any]:
                 """,
                 (outcome, transaction["id"]),
             )
+            if best_document and outcome == "certain_match":
+                connection.execute(
+                    """
+                    UPDATE documents
+                    SET payment_status = 'paid',
+                        payment_date = ?,
+                        payment_method = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        transaction["booking_date"],
+                        _infer_payment_method(dict(transaction)),
+                        best_document["id"],
+                    ),
+                )
         connection.commit()
 
     return {

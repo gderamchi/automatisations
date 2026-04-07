@@ -13,9 +13,21 @@ from apps.workers.common.jsonio import dump_json
 from apps.workers.common.schemas import OCRNormalized
 from apps.workers.common.settings import Settings, get_settings
 from apps.workers.connectors.mistral_client import MistralOCRClient
+from apps.workers.routing.service import ensure_routing_task, parse_manual_hints
 
 
 DATE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d")
+
+FRENCH_MONTHS = {
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4,
+    "mai": 5, "juin": 6, "juillet": 7, "août": 8, "aout": 8,
+    "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12, "decembre": 12,
+}
+
+_FRENCH_MONTH_RE = re.compile(
+    r"(\d{1,2})\s+(" + "|".join(FRENCH_MONTHS) + r")\s+(\d{4})",
+    flags=re.IGNORECASE,
+)
 
 NOISY_SUPPLIER_LINES = {
     "# payé",
@@ -50,6 +62,15 @@ def parse_date_value(raw: str | None) -> date | None:
             return datetime.strptime(cleaned, fmt).date()
         except ValueError:
             continue
+    match = _FRENCH_MONTH_RE.search(cleaned)
+    if match:
+        day, month_name, year = int(match.group(1)), match.group(2).lower(), int(match.group(3))
+        month = FRENCH_MONTHS.get(month_name)
+        if month:
+            try:
+                return date(year, month, day)
+            except ValueError:
+                pass
     return None
 
 
@@ -75,11 +96,13 @@ def extract_supplier_name(text: str) -> str | None:
     ]
     for pattern in priority_patterns:
         candidate = normalize_space(first_pattern(text, [pattern]))
+        if candidate:
+            candidate = candidate.lstrip("#").strip()
         if candidate and candidate.lower() not in NOISY_SUPPLIER_LINES:
             return candidate[:150]
 
     for line in text.splitlines():
-        stripped = line.strip()
+        stripped = line.strip().lstrip("#").strip()
         if not stripped:
             continue
         lowered = stripped.lower()
@@ -142,21 +165,59 @@ def extract_document_insights(text: str) -> dict[str, str]:
     return insights
 
 
-def extract_table_totals(text: str) -> tuple[Decimal | None, Decimal | None]:
-    matches = list(
-        re.finditer(
-            r"\|\s*(?:\d+\s*%|Total)\s*\|\s*([0-9\s.,]+)\s*€?\s*\|\s*([0-9\s.,]+)\s*€?\s*\|",
-            text,
-            flags=re.IGNORECASE | re.MULTILINE,
-        )
+def extract_table_totals(text: str) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """Extract gross, net, and vat amounts from markdown table cells.
+
+    Looks for cells where a label (Total HT, Total TVA, TTC, etc.) is
+    followed by an amount in the same or next cell.
+    """
+    amount_in_cell = re.compile(
+        r"\|\s*([^|]*?(?:total\s+ht|montant\s+ht|net\s+ht|total\s+ttc|montant\s+ttc|net\s+[àa]\s+payer|total\s+tva|montant\s+tva|tva)[^|]*?)\s*\|",
+        flags=re.IGNORECASE,
     )
-    if not matches:
-        return None, None
-    match = matches[-1]
-    return parse_french_decimal(match.group(1)), parse_french_decimal(match.group(2))
+    amount_re = re.compile(r"([0-9][0-9\s.,]*[0-9])\s*€")
+
+    gross: Decimal | None = None
+    net: Decimal | None = None
+    vat: Decimal | None = None
+
+    for line in text.splitlines():
+        if "|" not in line:
+            continue
+        cells = [cell.strip() for cell in line.split("|")]
+        for i, cell in enumerate(cells):
+            lowered = cell.lower()
+            is_ht = any(k in lowered for k in ("total ht", "montant ht", "net ht"))
+            is_ttc = any(k in lowered for k in ("total ttc", "montant ttc", "net à payer", "net a payer"))
+            is_tva = any(k in lowered for k in ("total tva", "montant tva")) or (
+                "tva" in lowered and "%" in lowered
+            )
+            if not (is_ht or is_ttc or is_tva):
+                continue
+            # Amount is in subsequent cells (not the label cell — avoids catching percentages)
+            for candidate in cells[i + 1 :]:
+                match = amount_re.search(candidate)
+                if not match:
+                    match = re.search(r"([0-9][0-9\s.,]*[0-9])", candidate)
+                if match:
+                    value = parse_french_decimal(match.group(1))
+                    if value and value > 0:
+                        if is_ttc and gross is None:
+                            gross = value
+                        elif is_ht and net is None:
+                            net = value
+                        elif is_tva and vat is None:
+                            vat = value
+                        break
+
+    return gross, net, vat
 
 
-def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | None = None) -> OCRNormalized:
+def normalize_ocr_payload(
+    raw_payload: dict[str, Any],
+    source_file_id: int | None = None,
+    manual_hints: dict[str, Any] | None = None,
+) -> OCRNormalized:
     pages = raw_payload.get("pages", [])
     markdown_parts = [page.get("markdown", "") for page in pages if isinstance(page, dict)]
     if not markdown_parts and raw_payload.get("raw_text"):
@@ -173,12 +234,14 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
             r"(?:ref(?:erence)?|pi[eè]ce)\s*[:#\s-]*([A-Z0-9][A-Z0-9\/_-]{2,})",
         ],
     )
+    _french_months_alt = "|".join(FRENCH_MONTHS)
     invoice_date = parse_date_value(
         first_pattern(
             text,
             [
                 r"date de la facture(?:\s*/\s*date de\s*la livraison)?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
-                r"(?:date(?: de)? facture|date d['’]emission|date de la facture/date de la livraison|date de la facture|date de livraison|date)\s*[:#-]?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
+                r"(?:date(?: de)? facture|date d[‘’]emission|date de la facture/date de la livraison|date de la facture|date de livraison|date)\s*[:#-]?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
+                r"(?:le\s+)?(\d{1,2}\s+(?:" + _french_months_alt + r")\s+\d{4})",
             ],
         )
     )
@@ -194,9 +257,9 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
         first_pattern(
             text,
             [
-                r"^(?:total\s+ttc|montant\s+ttc|net\s+a\s+payer)\s*[:#-]?\s*([0-9\s.,]+)\s*$",
-                r"^total\s*[:#-]?\s*([0-9\s.,]+)\s*$",
-                r"(?:total à payer|facture total)\s*[:#-]?\s*([0-9\s.,]+)\s*[€EUR]*",
+                r"(?:net\s+[àa]\s+payer\s+ttc|total\s+ttc|montant\s+ttc)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
+                r"(?:total\s+[àa]\s+payer|facture\s+total)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
+                r"(?:net\s+[àa]\s+payer)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
             ],
         )
     )
@@ -204,7 +267,7 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
         first_pattern(
             text,
             [
-                r"^(?:total\s+ht|montant\s+ht|net\s+ht)\s*[:#-]?\s*([0-9\s.,]+)\s*$",
+                r"(?:total\s+ht(?:\s+net)?|montant\s+ht|net\s+ht)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
             ],
         )
     )
@@ -212,12 +275,14 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
         first_pattern(
             text,
             [
-                r"^(?:tva(?:\s+\d+(?:[.,]\d+)?%)?)\s*[:#-]?\s*([0-9\s.,]+)\s*$",
+                r"(?:total\s+tva|montant\s+tva)\s*(?:\(?\s*\d+[\s.,]*\d*\s*%\s*\)?)?\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
+                r"(?:^|\|)\s*tva\s*(?:\(?\s*\d+[\s.,]*\d*\s*%\s*\)?)?\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
             ],
         )
     )
-    if net_amount is None or vat_amount is None:
-        table_net, table_vat = extract_table_totals(text)
+    if gross_amount is None or net_amount is None or vat_amount is None:
+        table_gross, table_net, table_vat = extract_table_totals(text)
+        gross_amount = gross_amount or table_gross
         net_amount = net_amount or table_net
         vat_amount = vat_amount or table_vat
     project_ref = first_pattern(
@@ -229,6 +294,8 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
 
     payload = OCRNormalized(
         document_type="purchase_invoice",
+        document_kind="invoice" if invoice_number or "facture" in text.lower() or "invoice" in text.lower() else "unknown",
+        supply_type=str((manual_hints or {}).get("fourniture") or "") or None,
         supplier_name=supplier_name,
         supplier_siret=siret.replace(" ", "") if siret else None,
         invoice_number=invoice_number,
@@ -240,6 +307,7 @@ def normalize_ocr_payload(raw_payload: dict[str, Any], source_file_id: int | Non
         project_ref=project_ref,
         source_file_id=source_file_id,
         raw_text=text[:20000],
+        manual_hints=manual_hints or {},
     )
     missing_fields = [
         field
@@ -269,7 +337,7 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
     with get_connection(current) as connection, job_run(connection, f"ocr:{document_id}"):
         record = connection.execute(
             """
-            SELECT d.id, df.id AS file_id, df.stored_path
+            SELECT d.id, df.id AS file_id, df.stored_path, d.metadata_json
             FROM documents d
             JOIN document_files df ON df.document_id = d.id
             WHERE d.id = ? AND df.file_role = 'original'
@@ -280,8 +348,10 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
             raise KeyError(f"Document not found: {document_id}")
 
         file_path = Path(record["stored_path"])
+        metadata = json.loads(record["metadata_json"] or "{}")
+        manual_hints = parse_manual_hints(metadata.get("subject"), metadata.get("body"))
         raw_payload = _mock_ocr(file_path) if current.ocr_mock_mode or not current.mistral_api_key else MistralOCRClient(current).process_file(file_path)
-        normalized = normalize_ocr_payload(raw_payload, source_file_id=int(record["file_id"]))
+        normalized = normalize_ocr_payload(raw_payload, source_file_id=int(record["file_id"]), manual_hints=manual_hints)
 
         dump_json(current.archive_normalized_dir / f"document_{document_id}.json", normalized.model_dump(mode="json"))
 
@@ -303,7 +373,7 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
         connection.execute(
             """
             UPDATE documents
-            SET document_type = ?, supplier_name = ?, supplier_siret = ?, invoice_number = ?,
+            SET document_type = ?, document_kind = ?, supply_type = ?, supplier_name = ?, supplier_siret = ?, invoice_number = ?,
                 invoice_date = ?, due_date = ?, currency = ?, net_amount = ?, vat_amount = ?,
                 gross_amount = ?, project_ref = ?, confidence = ?, normalized_payload_json = ?,
                 validation_status = ?, current_stage = ?, validated_payload_json = CASE WHEN ? = 'validated' THEN ? ELSE validated_payload_json END,
@@ -312,6 +382,8 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
             """,
             (
                 normalized.document_type,
+                normalized.document_kind,
+                normalized.supply_type,
                 normalized.supplier_name,
                 normalized.supplier_siret,
                 normalized.invoice_number,
@@ -355,6 +427,8 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
                 )
 
         connection.commit()
+        if not validation_required:
+            ensure_routing_task(document_id, force_refresh=True, settings=current)
         return {
             "document_id": document_id,
             "confidence": normalized.confidence,

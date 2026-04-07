@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Routage document {{ task.document_id }}</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Routage documentaire</p>
+          <h1>Document #{{ task.document_id }}</h1>
+          <p class="lead">{{ task.source_name }} · statut {{ task.status }}</p>
+          {% if result %}
+          <p class="banner">Décision enregistrée: {{ result.decision }}</p>
+          {% endif %}
+          {% if dispatch_result %}
+          <p class="banner">Dispatch: {{ dispatch_result.stage }}</p>
+          {% endif %}
+        </div>
+        <a class="button secondary" onclick="history.back()">Retour</a>
+      </section>
+
+      <section class="validation-layout">
+        <article class="panel preview-panel">
+          <div class="panel-head">
+            <h2>Aperçu document</h2>
+          </div>
+          <iframe class="preview-frame" src="/files/{{ task.document_id }}"></iframe>
+        </article>
+
+        <article class="panel form-panel">
+          {% set payload = task.corrected_payload or task.proposed_payload %}
+
+          <div class="summary-card">
+            <div class="summary-row">
+              <span class="summary-label">Type</span>
+              <span class="summary-value">{{ payload.document_kind or "inconnu" }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Fourniture</span>
+              <span class="summary-value">{{ payload.supply_type or "inconnu" }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Chantier</span>
+              <span class="summary-value">{{ payload.target_label or "non identifié" }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Confiance</span>
+              <span class="summary-value">{{ "%.0f"|format((payload.routing_confidence or 0) * 100) }}%</span>
+            </div>
+          </div>
+
+          {% if payload.matching_notes %}
+          <div class="panel-subsection">
+            <ul class="simple-list muted">
+              {% for note in payload.matching_notes %}
+              <li>{{ note }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+
+          <form method="post">
+            <div class="panel-head">
+              <h2>Corriger si besoin</h2>
+            </div>
+            <div class="form-grid">
+              <label>
+                Nature document
+                <select name="document_kind">
+                  {% for kind in ["invoice", "quotation", "receipt", "purchase_order", "credit_note", "unknown"] %}
+                  <option value="{{ kind }}" {{ "selected" if payload.document_kind == kind else "" }}>{{ kind }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Type fourniture
+                <select name="supply_type">
+                  {% for stype in ["carburant", "materiel", "hotel", "repas", "peage", "consommable", "unknown"] %}
+                  <option value="{{ stype }}" {{ "selected" if payload.supply_type == stype else "" }}>{{ stype }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Chantier
+                <input type="text" name="target_label" value="{{ payload.target_label or '' }}">
+              </label>
+              <label>
+                Nom final
+                <input type="text" name="final_filename" value="{{ payload.final_filename or '' }}">
+              </label>
+            </div>
+
+            <details class="tech-details">
+              <summary>Détails techniques</summary>
+              <div class="form-grid">
+                <label>
+                  Confiance routage
+                  <input type="number" step="0.01" name="routing_confidence" value="{{ payload.routing_confidence or 0 }}">
+                </label>
+                <label>
+                  Client InterFast
+                  <input type="text" name="client_external_id" value="{{ payload.client_external_id or '' }}">
+                </label>
+                <label>
+                  Chantier InterFast
+                  <input type="text" name="worksite_external_id" value="{{ payload.worksite_external_id or '' }}">
+                </label>
+                <label>
+                  Cible InterFast
+                  <input type="text" name="interfast_target_type" value="{{ payload.interfast_target_type or '' }}">
+                </label>
+                <label>
+                  ID cible InterFast
+                  <input type="text" name="interfast_target_id" value="{{ payload.interfast_target_id or '' }}">
+                </label>
+                <label>
+                  Dossier standard
+                  <input type="text" name="standard_path" value="{{ payload.standard_path or '' }}">
+                </label>
+                <label>
+                  Dossier compta
+                  <input type="text" name="accounting_path" value="{{ payload.accounting_path or '' }}">
+                </label>
+                <label>
+                  Dossier chantier
+                  <input type="text" name="worksite_path" value="{{ payload.worksite_path or '' }}">
+                </label>
+              </div>
+            </details>
+
+            <input type="hidden" name="validator_name" value="">
+
+            <label class="textarea-label">
+              Notes
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+
+            <div class="action-row">
+              <button class="button primary-action" type="submit" name="decision" value="approve">Confirmer et classer</button>
+              <button class="button danger" type="submit" name="decision" value="reject">Rejeter</button>
+            </div>
+          </form>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

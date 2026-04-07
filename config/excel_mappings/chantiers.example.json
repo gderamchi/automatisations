@@ -1,0 +1,16 @@
+{
+  "workbook_path": "${DATA_ROOT}/state/cache/chantiers.xlsx",
+  "sheet": "Chantiers",
+  "start_row": 2,
+  "template_row": 2,
+  "key_column": "A",
+  "columns": {
+    "invoice_date": "A",
+    "project_ref": "B",
+    "supplier_name": "C",
+    "document_kind": "D",
+    "supply_type": "E",
+    "gross_amount": "F",
+    "final_filename": "G"
+  }
+}

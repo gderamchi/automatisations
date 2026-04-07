@@ -71,4 +71,40 @@ def sync_interfast(
             summary["entities"][entity_type] = len(items)
 
         connection.commit()
+
+    # Extract worksites embedded in quotes/invoices/credits (outside transaction)
+    worksite_count = _extract_embedded_worksites(current)
+    if worksite_count:
+        summary["worksites_extracted"] = worksite_count
+
     return summary
+
+
+def _extract_embedded_worksites(settings: Settings) -> int:
+    """Extract worksite data embedded in billing entities (quotes, invoices, credits)."""
+    with get_connection(settings) as conn:
+        rows = conn.execute(
+            "SELECT payload_json FROM interfast_entities WHERE entity_type IN ('quotes', 'client_invoices', 'credits')"
+        ).fetchall()
+    seen: set[str] = set()
+    count = 0
+    for row in rows:
+        payload = json.loads(row["payload_json"])
+        worksite = payload.get("worksite")
+        if not isinstance(worksite, dict) or not worksite.get("id"):
+            continue
+        ws_id = str(worksite["id"])
+        if ws_id in seen:
+            continue
+        seen.add(ws_id)
+        client = payload.get("client") or {}
+        title = worksite.get("title") or payload.get("name") or f"Chantier {ws_id}"
+        upsert_project(
+            external_project_id=ws_id,
+            project_code=worksite.get("reference") and f"CCM-{worksite['reference']:03d}" or None,
+            project_name=title,
+            metadata={**worksite, "client": client},
+            settings=settings,
+        )
+        count += 1
+    return count

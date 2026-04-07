@@ -14,7 +14,7 @@ from apps.api.app.auth import require_internal_token, require_validation_user
 from apps.workers.banking.importer import import_bank_csv
 from apps.workers.banking.matching import match_bank_transactions
 from apps.workers.common.database import get_connection, init_db
-from apps.workers.common.schemas import BankImportRequest, ExportRequest, IngestRequest, InterfastSyncRequest, OcrRunResponse, OCRNormalized, ValidationDecision
+from apps.workers.common.schemas import BankImportRequest, ExportRequest, IngestRequest, InterfastSyncRequest, OcrRunResponse, OCRNormalized, RoutingDecision, RoutingProposal, ValidationDecision
 from apps.workers.common.settings import Settings, ensure_runtime_directories, get_settings
 from apps.workers.documents.ingest import ingest_document
 from apps.workers.documents.ocr_service import run_document_ocr
@@ -22,8 +22,10 @@ from apps.workers.documents.excel import write_document_to_excel
 from apps.workers.documents.validation import apply_validation, get_document_file_path, get_validation_task, list_pending_validation_tasks
 from apps.workers.doe.service import rebuild_project_tree
 from apps.workers.exports.inexweb import export_inexweb
+from apps.workers.exports.weekly_accounting import send_weekly_accounting_email
 from apps.workers.sync.interfast import sync_interfast
 from apps.workers.accounting.entries import generate_entries_for_document
+from apps.workers.routing.service import apply_routing, dispatch_document, ensure_routing_task, get_routing_task, list_pending_routing_tasks
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -45,6 +47,8 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 def _build_corrected_payload(
     extracted_payload: dict,
     document_type: str,
+    document_kind: str | None,
+    supply_type: str | None,
     supplier_name: str | None,
     supplier_siret: str | None,
     invoice_number: str | None,
@@ -60,6 +64,8 @@ def _build_corrected_payload(
     payload.update(
         {
             "document_type": document_type,
+            "document_kind": document_kind or payload.get("document_kind"),
+            "supply_type": supply_type or payload.get("supply_type"),
             "supplier_name": supplier_name,
             "supplier_siret": supplier_siret,
             "invoice_number": invoice_number,
@@ -73,6 +79,41 @@ def _build_corrected_payload(
         }
     )
     return OCRNormalized.model_validate(payload)
+
+
+def _build_routing_payload(
+    proposed_payload: dict,
+    document_kind: str | None,
+    supply_type: str | None,
+    final_filename: str | None,
+    routing_confidence: str | None,
+    client_external_id: str | None,
+    worksite_external_id: str | None,
+    interfast_target_type: str | None,
+    interfast_target_id: str | None,
+    target_label: str | None,
+    standard_path: str | None,
+    accounting_path: str | None,
+    worksite_path: str | None,
+) -> RoutingProposal:
+    payload = dict(proposed_payload)
+    payload.update(
+        {
+            "document_kind": document_kind or payload.get("document_kind") or "unknown",
+            "supply_type": supply_type or payload.get("supply_type") or "unknown",
+            "final_filename": final_filename or payload.get("final_filename"),
+            "routing_confidence": float(routing_confidence) if routing_confidence else float(payload.get("routing_confidence") or 0),
+            "client_external_id": client_external_id or payload.get("client_external_id"),
+            "worksite_external_id": worksite_external_id or payload.get("worksite_external_id"),
+            "interfast_target_type": interfast_target_type or payload.get("interfast_target_type"),
+            "interfast_target_id": interfast_target_id or payload.get("interfast_target_id"),
+            "target_label": target_label or payload.get("target_label"),
+            "standard_path": standard_path or payload.get("standard_path"),
+            "accounting_path": accounting_path or payload.get("accounting_path"),
+            "worksite_path": worksite_path or payload.get("worksite_path"),
+        }
+    )
+    return RoutingProposal.model_validate(payload)
 
 
 @app.get("/", include_in_schema=False)
@@ -97,6 +138,9 @@ async def dashboard(
             "documents_pending_validation": connection.execute(
                 "SELECT COUNT(*) FROM documents WHERE validation_status = 'pending'"
             ).fetchone()[0],
+            "documents_pending_routing": connection.execute(
+                "SELECT COUNT(*) FROM routing_tasks WHERE status = 'pending'"
+            ).fetchone()[0],
             "documents_rejected": connection.execute(
                 "SELECT COUNT(*) FROM documents WHERE validation_status = 'rejected'"
             ).fetchone()[0],
@@ -110,12 +154,27 @@ async def dashboard(
                 "SELECT COUNT(*) FROM doe_projects WHERE completeness_status = 'incomplete'"
             ).fetchone()[0],
         }
+        recent_documents = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT id, source_name, supplier_name, gross_amount, document_kind, supply_type,
+                       project_ref, worksite_external_id, current_stage, routing_confidence, updated_at
+                FROM documents
+                WHERE current_stage IN ('dispatched', 'dispatch_blocked', 'dispatch_failed', 'routed')
+                ORDER BY updated_at DESC
+                LIMIT 10
+                """
+            ).fetchall()
+        ]
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={
             "metrics": metrics,
             "pending_tasks": list_pending_validation_tasks(settings),
+            "pending_routing_tasks": list_pending_routing_tasks(settings),
+            "recent_documents": recent_documents,
             "refresh_seconds": settings.dashboard_refresh_seconds,
         },
     )
@@ -124,17 +183,60 @@ async def dashboard(
 @app.get("/files/{document_id}")
 async def file_preview(
     document_id: int,
-    _: str = Depends(require_validation_user),
 ) -> FileResponse:
     path = get_document_file_path(document_id)
     return FileResponse(path)
+
+
+@app.get("/review/{batch_token}", response_class=HTMLResponse)
+async def review_batch(
+    batch_token: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    with get_connection(settings) as connection:
+        documents = [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT d.id, d.source_name, d.supplier_name, d.invoice_number, d.invoice_date,
+                       d.gross_amount, d.project_ref, d.document_kind, d.current_stage,
+                       d.validation_status, d.confidence, d.routing_confidence,
+                       d.interfast_target_type, d.interfast_target_id,
+                       vt.token AS validation_token, vt.status AS validation_task_status,
+                       rt.token AS routing_token, rt.status AS routing_task_status
+                FROM documents d
+                LEFT JOIN validation_tasks vt ON vt.document_id = d.id AND vt.status = 'pending'
+                LEFT JOIN routing_tasks rt ON rt.document_id = d.id AND rt.status = 'pending'
+                WHERE d.batch_token = ?
+                ORDER BY d.id
+                """,
+                (batch_token,),
+            ).fetchall()
+        ]
+    if not documents:
+        raise HTTPException(status_code=404, detail="Aucun document trouvé pour ce lien")
+    interfast_base = (settings.interfast_base_url or "https://app.inter-fast.fr").rstrip("/")
+    interfast_ui_paths = {"bill": "dashboard/billing/bills", "quotation": "dashboard/billing/quotations", "credit": "dashboard/billing/credits", "expense": "dashboard/expenses?expenses=%7B%22pageIndex%22%3A0%7D"}
+    for doc in documents:
+        target_type = doc.get("interfast_target_type") or ""
+        ui_path = interfast_ui_paths.get(target_type)
+        target_id = doc.get("interfast_target_id")
+        if ui_path and target_id:
+            doc["interfast_link"] = f"{interfast_base}/{ui_path}" if target_type == "expense" else f"{interfast_base}/{ui_path}/{target_id}"
+        else:
+            doc["interfast_link"] = None
+    return templates.TemplateResponse(
+        request=request,
+        name="review_batch.html",
+        context={"documents": documents, "batch_token": batch_token},
+    )
 
 
 @app.get("/validate/{token}", response_class=HTMLResponse)
 async def validation_page(
     token: str,
     request: Request,
-    _: str = Depends(require_validation_user),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     task = get_validation_task(token, settings)
@@ -147,11 +249,12 @@ async def validation_page(
 async def submit_validation(
     token: str,
     request: Request,
-    auth_username: str = Depends(require_validation_user),
     document_type: str = Form(default="purchase_invoice"),
+    document_kind: str | None = Form(default=None),
     decision: str = Form(...),
     validator_name: str = Form(default=""),
     notes: str = Form(default=""),
+    supply_type: str | None = Form(default=None),
     supplier_name: str | None = Form(default=None),
     supplier_siret: str | None = Form(default=None),
     invoice_number: str | None = Form(default=None),
@@ -172,6 +275,8 @@ async def submit_validation(
         corrected = _build_corrected_payload(
             task["corrected_payload"] or task["extracted_payload"],
             document_type,
+            document_kind,
+            supply_type,
             supplier_name,
             supplier_siret,
             invoice_number,
@@ -187,7 +292,7 @@ async def submit_validation(
         token,
         ValidationDecision(
             decision=decision,
-            validator_name=validator_name or auth_username,
+            validator_name=validator_name or "mail-user",
             notes=notes or None,
             corrected_data=corrected,
         ),
@@ -198,6 +303,80 @@ async def submit_validation(
         request=request,
         name="validation_detail.html",
         context={"task": task, "result": result},
+    )
+
+
+@app.get("/route/{token}", response_class=HTMLResponse)
+async def routing_page(
+    token: str,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    task = get_routing_task(token, settings)
+    if not task:
+        raise HTTPException(status_code=404, detail="Routing task not found")
+    return templates.TemplateResponse(request=request, name="routing_detail.html", context={"task": task})
+
+
+@app.post("/route/{token}", response_class=HTMLResponse)
+async def submit_routing(
+    token: str,
+    request: Request,
+    decision: str = Form(...),
+    validator_name: str = Form(default=""),
+    notes: str = Form(default=""),
+    document_kind: str | None = Form(default=None),
+    supply_type: str | None = Form(default=None),
+    final_filename: str | None = Form(default=None),
+    routing_confidence: str | None = Form(default=None),
+    client_external_id: str | None = Form(default=None),
+    worksite_external_id: str | None = Form(default=None),
+    interfast_target_type: str | None = Form(default=None),
+    interfast_target_id: str | None = Form(default=None),
+    target_label: str | None = Form(default=None),
+    standard_path: str | None = Form(default=None),
+    accounting_path: str | None = Form(default=None),
+    worksite_path: str | None = Form(default=None),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    task = get_routing_task(token, settings)
+    if not task:
+        raise HTTPException(status_code=404, detail="Routing task not found")
+    corrected = None
+    dispatch_result = None
+    if decision != "reject":
+        corrected = _build_routing_payload(
+            task["corrected_payload"] or task["proposed_payload"],
+            document_kind,
+            supply_type,
+            final_filename,
+            routing_confidence,
+            client_external_id,
+            worksite_external_id,
+            interfast_target_type,
+            interfast_target_id,
+            target_label,
+            standard_path,
+            accounting_path,
+            worksite_path,
+        )
+    result = apply_routing(
+        token,
+        RoutingDecision(
+            decision=decision,
+            validator_name=validator_name or "mail-user",
+            notes=notes or None,
+            corrected_data=corrected,
+        ),
+        settings,
+    )
+    if decision == "approve" and settings.routing_auto_dispatch:
+        dispatch_result = dispatch_document(task["document_id"], settings=settings)
+    task = get_routing_task(token, settings)
+    return templates.TemplateResponse(
+        request=request,
+        name="routing_detail.html",
+        context={"task": task, "result": result, "dispatch_result": dispatch_result},
     )
 
 
@@ -223,6 +402,24 @@ async def document_ocr_endpoint(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     return run_document_ocr(document_id, settings)
+
+
+@app.post("/internal/documents/{document_id}/route")
+async def route_document_endpoint(
+    document_id: int,
+    _: None = Depends(require_internal_token),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return ensure_routing_task(document_id, force_refresh=True, settings=settings)
+
+
+@app.post("/internal/documents/{document_id}/dispatch")
+async def dispatch_document_endpoint(
+    document_id: int,
+    _: None = Depends(require_internal_token),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return dispatch_document(document_id, settings=settings)
 
 
 @app.post("/internal/bank/import")
@@ -280,3 +477,11 @@ async def rebuild_doe_endpoint(
     settings: Settings = Depends(get_settings),
 ) -> dict:
     return rebuild_project_tree(project_id, settings=settings)
+
+
+@app.post("/internal/weekly-accounting")
+async def weekly_accounting_endpoint(
+    _: None = Depends(require_internal_token),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    return send_weekly_accounting_email(settings=settings)

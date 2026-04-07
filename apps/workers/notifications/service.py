@@ -43,6 +43,13 @@ def send_telegram_message(body: str, settings: Settings | None = None) -> dict[s
     return response.json()
 
 
+def send_telegram_message_if_configured(body: str, settings: Settings | None = None) -> dict[str, Any] | None:
+    current = settings or get_settings()
+    if not current.telegram_bot_token or not current.telegram_chat_id:
+        return None
+    return send_telegram_message(body, settings=current)
+
+
 def send_email(recipient: str, subject: str, body: str, settings: Settings | None = None) -> None:
     send_email_with_options(recipient=recipient, subject=subject, body=body, settings=settings)
 

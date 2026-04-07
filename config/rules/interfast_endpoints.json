@@ -1,0 +1,57 @@
+{
+  "headers": {
+    "Accept": "application/json"
+  },
+  "entities": {
+    "client_invoices": {
+      "path": "/v1/billing/bills",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updatedAt",
+      "updated_after_param": "updated_after",
+      "params": {
+        "page": "1",
+        "size": "5"
+      }
+    },
+    "quotes": {
+      "path": "/v1/billing/quotations",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updatedAt",
+      "updated_after_param": "updated_after",
+      "params": {
+        "page": "1",
+        "size": "5"
+      }
+    },
+    "credits": {
+      "path": "/v1/billing/credits",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updatedAt",
+      "updated_after_param": "updated_after",
+      "params": {
+        "page": "1",
+        "size": "5"
+      }
+    },
+    "expenses": {
+      "path": "/v1/expenses",
+      "list_field": "items",
+      "id_field": "id",
+      "updated_field": "updatedAt",
+      "updated_after_param": "updated_after",
+      "params": {
+        "page": "1",
+        "size": "50"
+      }
+    },
+    "projects": {
+      "path": "/v1/worksites",
+      "id_field": "id",
+      "updated_field": "updatedDate",
+      "updated_after_param": "updated_after"
+    }
+  }
+}

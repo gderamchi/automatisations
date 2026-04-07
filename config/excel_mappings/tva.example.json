@@ -1,0 +1,15 @@
+{
+  "workbook_path": "${DATA_ROOT}/state/cache/tva.xlsx",
+  "sheet": "TVA",
+  "start_row": 2,
+  "template_row": 2,
+  "key_column": "A",
+  "columns": {
+    "invoice_date": "A",
+    "supplier_name": "B",
+    "invoice_number": "C",
+    "vat_amount": "D",
+    "gross_amount": "E",
+    "payment_status": "F"
+  }
+}

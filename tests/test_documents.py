@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from apps.workers.common.database import get_connection
 from apps.workers.documents.excel import write_document_to_excel
 from apps.workers.documents.ingest import ingest_document
 from apps.workers.documents.ocr_service import run_document_ocr
@@ -27,6 +28,9 @@ def test_ocr_extracts_fields_and_auto_validates(tmp_path, test_settings, sample_
 
     assert result["validation_required"] is False
     assert result["confidence"] >= test_settings.ocr_confidence_threshold
+    with get_connection(test_settings) as connection:
+        routing_count = connection.execute("SELECT COUNT(*) FROM routing_tasks").fetchone()[0]
+    assert routing_count == 1
 
 
 def test_ocr_creates_validation_task_when_missing_fields(tmp_path, test_settings, incomplete_invoice_text):

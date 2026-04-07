@@ -29,21 +29,46 @@ def test_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("REPLY_TO_EMAIL", "owner@example.com")
     monkeypatch.setenv("MAIL_REPLY_SUBJECT_PREFIX", "[AUTOMATISATIONS OCR]")
     monkeypatch.setenv("MAIL_BOOTSTRAP_CURRENT_UID", "false")
+    monkeypatch.setenv("INTERFAST_WRITE_MODE", "disabled")
+    monkeypatch.setenv("WEEKLY_ACCOUNTING_RECIPIENT", "compta@example.com")
     get_settings.cache_clear()
     settings = get_settings()
     init_db(settings)
 
-    workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = "Achats"
-    worksheet["A1"] = "Date"
-    worksheet["B1"] = "Fournisseur"
-    worksheet["C1"] = "Facture"
-    worksheet["D1"] = "HT"
-    worksheet["E1"] = "TVA"
-    worksheet["F1"] = "TTC"
-    worksheet["G1"] = "Chantier"
-    workbook.save(data_root / "state/cache/purchases.xlsx")
+    workbook_specs = [
+        (
+            "purchases.xlsx",
+            "Achats",
+            ["Date", "Fournisseur", "Facture", "HT", "TVA", "TTC", "Chantier"],
+        ),
+        (
+            "grand_livre.xlsx",
+            "GrandLivre",
+            ["Date", "Fournisseur", "Facture", "HT", "TVA", "TTC", "Statut", "DatePaiement"],
+        ),
+        (
+            "tresorerie.xlsx",
+            "Tresorerie",
+            ["Date", "Echeance", "Fournisseur", "TTC", "Statut", "DatePaiement", "ModePaiement"],
+        ),
+        (
+            "chantiers.xlsx",
+            "Chantiers",
+            ["Date", "Chantier", "Fournisseur", "Nature", "Fourniture", "TTC", "NomFinal"],
+        ),
+        (
+            "tva.xlsx",
+            "TVA",
+            ["Date", "Fournisseur", "Facture", "TVA", "TTC", "Statut"],
+        ),
+    ]
+    for filename, sheet_name, headers in workbook_specs:
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = sheet_name
+        for index, header in enumerate(headers, start=1):
+            worksheet.cell(row=1, column=index, value=header)
+        workbook.save(data_root / "state/cache" / filename)
 
     yield settings
     get_settings.cache_clear()

@@ -19,13 +19,17 @@
 3. Validation
    - L'utilisateur ouvre `/validate/{token}`.
    - La decision met a jour la source canonique dans `documents` et `validation_tasks`.
-4. Comptabilisation
-   - Excel: `write_document_to_excel`.
-   - Ecritures: `generate_entries_for_document`.
-   - Export: `POST /internal/exports/inexweb`.
-5. Lots complementaires
+4. Routage
+   - `POST /internal/documents/{id}/route` construit la proposition chantier, classement et cible InterFast.
+   - L'utilisateur ouvre `/route/{token}` puis valide le dispatch.
+5. Dispatch
+   - Copies NAS: standard, compta, chantier.
+   - Excel: `write_document_bundle`.
+   - InterFast: adapter `disabled|attachment|expense`.
+6. Lots complementaires
    - Interfast sync -> cache SQLite -> DOE.
    - Import banque -> matching -> anomalies.
+   - Envoi hebdomadaire comptable -> ZIP + email + Telegram.
 
 ## Volumes NAS standardises
 
@@ -34,6 +38,9 @@
 - `processing`
 - `archive/originals`
 - `archive/normalized`
+- `classified/standard`
+- `classified/accounting`
+- `classified/worksites`
 - `exports/inexweb`
 - `doe`
 - `state/sqlite`

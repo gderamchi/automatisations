@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Documents à vérifier</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <div>
+          <h1>Vos documents</h1>
+          <p class="lead">Vérifiez et validez les documents importés depuis votre mail.</p>
+        </div>
+      </section>
+
+      {% for doc in documents %}
+      <section class="panel doc-card">
+        <div class="doc-header">
+          <div class="doc-summary">
+            <strong>{{ doc.supplier_name or doc.source_name or "Document" }}</strong>
+            {% if doc.invoice_number %}
+            <span class="muted"> — n°{{ doc.invoice_number }}</span>
+            {% endif %}
+          </div>
+          <div>
+            {% if doc.current_stage == 'dispatched' %}
+            <span class="badge badge-success">Classé</span>
+            {% elif doc.current_stage == 'routed' %}
+            <span class="badge badge-success">Validé</span>
+            {% elif doc.validation_task_status == 'pending' %}
+            <span class="badge badge-danger">A vérifier</span>
+            {% elif doc.routing_task_status == 'pending' %}
+            <span class="badge badge-danger">Chantier à confirmer</span>
+            {% elif doc.current_stage == 'rejected' or doc.current_stage == 'routing_rejected' %}
+            <span class="badge badge-danger">Rejeté</span>
+            {% else %}
+            <span class="badge badge-info">En cours</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="doc-details">
+          {% if doc.gross_amount %}
+          <span><strong>{{ doc.gross_amount }} EUR</strong></span>
+          {% endif %}
+          {% if doc.invoice_date %}
+          <span>{{ doc.invoice_date }}</span>
+          {% endif %}
+          {% if doc.project_ref %}
+          <span>Chantier : {{ doc.project_ref }}</span>
+          {% endif %}
+          {% if doc.document_kind and doc.document_kind != 'unknown' %}
+          <span>{{ doc.document_kind }}</span>
+          {% endif %}
+        </div>
+
+        {% if doc.validation_task_status == 'pending' and doc.validation_token %}
+        <a class="button primary-action" href="/validate/{{ doc.validation_token }}">Vérifier ce document</a>
+        {% elif doc.routing_task_status == 'pending' and doc.routing_token %}
+        <a class="button primary-action" href="/route/{{ doc.routing_token }}">Confirmer le chantier</a>
+        {% endif %}
+        {% if doc.interfast_link and doc.current_stage in ('dispatched', 'dispatch_blocked') %}
+        <a class="button secondary" href="{{ doc.interfast_link }}" target="_blank">Voir sur InterFast</a>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </main>
+  </body>
+</html>

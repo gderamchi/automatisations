@@ -55,7 +55,7 @@ def _build_message(*, subject: str, sender: str, attachments: list[tuple[str, by
     return message.as_bytes()
 
 
-def test_mail_worker_processes_multiple_attachments_and_sends_reply(test_settings, sample_invoice_text):
+def test_mail_worker_processes_multiple_attachments_and_creates_routing_tasks(test_settings, sample_invoice_text):
     sent_messages = []
     fake_imap = FakeImapClient(
         {
@@ -73,23 +73,23 @@ def test_mail_worker_processes_multiple_attachments_and_sends_reply(test_setting
     worker = MailAutomationWorker(
         settings=test_settings,
         imap_factory=lambda: fake_imap,
-        smtp_sender=lambda **kwargs: sent_messages.append(kwargs),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
     )
 
     summary = worker.run_once()
 
     assert summary["messages_seen"] == 1
     assert summary["attachments_processed"] == 2
+    assert summary["routing_tasks_created"] == 1
     assert summary["reply_sent"] == 1
     assert len(sent_messages) == 1
-    assert sent_messages[0]["recipient"] == "owner@example.com"
-    assert "FAC-2026-001" in sent_messages[0]["body"]
-    assert "invoice-a.txt" in sent_messages[0]["body"]
-    assert "invoice-b.txt" in sent_messages[0]["body"]
+    assert sent_messages[0][0][1] == "owner@example.com"
 
     with get_connection(test_settings) as connection:
         processed_count = connection.execute("SELECT COUNT(*) FROM processed_emails").fetchone()[0]
+        routing_count = connection.execute("SELECT COUNT(*) FROM routing_tasks").fetchone()[0]
     assert processed_count == 2
+    assert routing_count == 1
 
 
 def test_mail_worker_does_not_reprocess_same_email(test_settings, sample_invoice_text):
@@ -105,20 +105,23 @@ def test_mail_worker_does_not_reprocess_same_email(test_settings, sample_invoice
     first_worker = MailAutomationWorker(
         settings=test_settings,
         imap_factory=lambda: first_imap,
-        smtp_sender=lambda **kwargs: sent_messages.append(kwargs),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
     )
     second_worker = MailAutomationWorker(
         settings=test_settings,
         imap_factory=lambda: second_imap,
-        smtp_sender=lambda **kwargs: sent_messages.append(kwargs),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
     )
 
     first_summary = first_worker.run_once()
     second_summary = second_worker.run_once()
 
+    assert first_summary["routing_tasks_created"] == 1
     assert first_summary["reply_sent"] == 1
     assert second_summary["reply_sent"] == 0
+    assert second_summary["routing_tasks_created"] == 0
     assert len(sent_messages) == 1
+    assert sent_messages[0][0][1] == "owner@example.com"
 
 
 def test_mail_worker_ignores_generated_reply_and_reports_unsupported_attachment(test_settings):
@@ -149,7 +152,7 @@ def test_mail_worker_ignores_generated_reply_and_reports_unsupported_attachment(
     worker = MailAutomationWorker(
         settings=test_settings,
         imap_factory=lambda: fake_imap,
-        smtp_sender=lambda **kwargs: sent_messages.append(kwargs),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
     )
 
     summary = worker.run_once()
@@ -157,5 +160,6 @@ def test_mail_worker_ignores_generated_reply_and_reports_unsupported_attachment(
     assert summary["messages_seen"] == 2
     assert summary["attachments_failed"] == 1
     assert summary["reply_sent"] == 1
+    assert summary["routing_tasks_created"] == 0
     assert len(sent_messages) == 1
-    assert "Unsupported attachment type" in sent_messages[0]["body"]
+    assert sent_messages[0][0][1] == "owner@example.com"

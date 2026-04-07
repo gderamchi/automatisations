@@ -1,0 +1,16 @@
+{
+  "workbook_path": "${DATA_ROOT}/state/cache/tresorerie.xlsx",
+  "sheet": "Tresorerie",
+  "start_row": 2,
+  "template_row": 2,
+  "key_column": "A",
+  "columns": {
+    "invoice_date": "A",
+    "due_date": "B",
+    "supplier_name": "C",
+    "gross_amount": "D",
+    "payment_status": "E",
+    "payment_date": "F",
+    "payment_method": "G"
+  }
+}

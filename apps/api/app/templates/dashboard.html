@@ -27,6 +27,10 @@
           <strong>{{ metrics.documents_pending_validation }}</strong>
         </article>
         <article class="metric-card">
+          <span>En routage</span>
+          <strong>{{ metrics.documents_pending_routing }}</strong>
+        </article>
+        <article class="metric-card">
           <span>Rejetés</span>
           <strong>{{ metrics.documents_rejected }}</strong>
         </article>
@@ -73,6 +77,80 @@
         </table>
         {% else %}
         <p>Aucune validation en attente.</p>
+        {% endif %}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Routages en attente</h2>
+        </div>
+        {% if pending_routing_tasks %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Document</th>
+              <th>Type</th>
+              <th>Fourniture</th>
+              <th>Réf chantier</th>
+              <th>Confiance</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for task in pending_routing_tasks %}
+            <tr>
+              <td>#{{ task.document_id }} · {{ task.source_name }}</td>
+              <td>{{ task.document_kind or "-" }}</td>
+              <td>{{ task.supply_type or "-" }}</td>
+              <td>{{ task.project_ref or "-" }}</td>
+              <td>{{ task.routing_confidence }}</td>
+              <td><a class="button" href="/route/{{ task.token }}">Ouvrir</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p>Aucun routage en attente.</p>
+        {% endif %}
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Derniers documents traités</h2>
+        </div>
+        {% if recent_documents %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Fournisseur</th>
+              <th>Type</th>
+              <th>Montant TTC</th>
+              <th>Chantier</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for doc in recent_documents %}
+            <tr>
+              <td>{{ doc.supplier_name or doc.source_name or "-" }}</td>
+              <td>{{ doc.document_kind or "-" }}</td>
+              <td>{{ "%.2f"|format(doc.gross_amount|float) if doc.gross_amount else "-" }} EUR</td>
+              <td>{{ doc.project_ref or "-" }}</td>
+              <td>
+                {% if doc.current_stage == 'dispatched' %}
+                <span class="badge badge-success">Classé</span>
+                {% elif doc.current_stage == 'routed' %}
+                <span class="badge badge-info">Routé</span>
+                {% else %}
+                <span class="badge badge-danger">Erreur</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p>Aucun document traité récemment.</p>
         {% endif %}
       </section>
     </main>

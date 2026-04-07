@@ -17,7 +17,7 @@
           <p class="banner">Décision enregistrée: {{ result.decision }}</p>
           {% endif %}
         </div>
-        <a class="button secondary" href="/dashboard">Retour dashboard</a>
+        <a class="button secondary" onclick="history.back()">Retour</a>
       </section>
 
       <section class="validation-layout">
@@ -29,39 +29,43 @@
         </article>
 
         <article class="panel form-panel">
-          <div class="panel-head">
-            <h2>Données extraites</h2>
+          {% set payload = task.corrected_payload or task.extracted_payload %}
+
+          <div class="summary-card">
+            <div class="summary-row">
+              <span class="summary-label">Fournisseur</span>
+              <span class="summary-value">{{ payload.supplier_name or "non détecté" }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Montant TTC</span>
+              <span class="summary-value">{{ payload.gross_amount or "-" }} {{ payload.currency or "EUR" }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Date</span>
+              <span class="summary-value">{{ payload.invoice_date or "non détectée" }}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">N° facture</span>
+              <span class="summary-value">{{ payload.invoice_number or "non détecté" }}</span>
+            </div>
           </div>
+
           <form method="post">
-            {% set payload = task.corrected_payload or task.extracted_payload %}
+            <div class="panel-head">
+              <h2>Corriger si besoin</h2>
+            </div>
             <div class="form-grid">
-              <label>
-                Type document
-                <input type="text" name="document_type" value="{{ payload.document_type or 'purchase_invoice' }}">
-              </label>
               <label>
                 Fournisseur
                 <input type="text" name="supplier_name" value="{{ payload.supplier_name or '' }}">
               </label>
               <label>
-                SIRET
-                <input type="text" name="supplier_siret" value="{{ payload.supplier_siret or '' }}">
-              </label>
-              <label>
-                Numéro facture
+                N° facture
                 <input type="text" name="invoice_number" value="{{ payload.invoice_number or '' }}">
               </label>
               <label>
                 Date facture
                 <input type="date" name="invoice_date" value="{{ payload.invoice_date or '' }}">
-              </label>
-              <label>
-                Échéance
-                <input type="date" name="due_date" value="{{ payload.due_date or '' }}">
-              </label>
-              <label>
-                Devise
-                <input type="text" name="currency" value="{{ payload.currency or 'EUR' }}">
               </label>
               <label>
                 Montant HT
@@ -79,19 +83,47 @@
                 Réf chantier
                 <input type="text" name="project_ref" value="{{ payload.project_ref or '' }}">
               </label>
-              <label>
-                Validateur
-                <input type="text" name="validator_name" value="">
-              </label>
             </div>
+
+            <details class="tech-details">
+              <summary>Détails techniques</summary>
+              <div class="form-grid">
+                <label>
+                  Type document
+                  <input type="text" name="document_type" value="{{ payload.document_type or 'purchase_invoice' }}">
+                </label>
+                <label>
+                  Nature document
+                  <input type="text" name="document_kind" value="{{ payload.document_kind or '' }}">
+                </label>
+                <label>
+                  Type fourniture
+                  <input type="text" name="supply_type" value="{{ payload.supply_type or '' }}">
+                </label>
+                <label>
+                  SIRET
+                  <input type="text" name="supplier_siret" value="{{ payload.supplier_siret or '' }}">
+                </label>
+                <label>
+                  Échéance
+                  <input type="date" name="due_date" value="{{ payload.due_date or '' }}">
+                </label>
+                <label>
+                  Devise
+                  <input type="text" name="currency" value="{{ payload.currency or 'EUR' }}">
+                </label>
+              </div>
+            </details>
+
+            <input type="hidden" name="validator_name" value="">
 
             <label class="textarea-label">
               Notes
-              <textarea name="notes" rows="4"></textarea>
+              <textarea name="notes" rows="3"></textarea>
             </label>
 
             <div class="action-row">
-              <button class="button" type="submit" name="decision" value="approve">Valider</button>
+              <button class="button primary-action" type="submit" name="decision" value="approve">Valider</button>
               <button class="button secondary" type="submit" name="decision" value="request-fix">Demander correction</button>
               <button class="button danger" type="submit" name="decision" value="reject">Rejeter</button>
             </div>

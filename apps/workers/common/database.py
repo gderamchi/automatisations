@@ -16,7 +16,12 @@ CREATE TABLE IF NOT EXISTS documents (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_kind TEXT NOT NULL,
     source_name TEXT,
+    source_subject TEXT,
+    source_sender TEXT,
+    source_body TEXT,
     document_type TEXT,
+    document_kind TEXT,
+    supply_type TEXT,
     supplier_name TEXT,
     supplier_siret TEXT,
     invoice_number TEXT,
@@ -27,6 +32,16 @@ CREATE TABLE IF NOT EXISTS documents (
     vat_amount TEXT,
     gross_amount TEXT,
     project_ref TEXT,
+    payment_status TEXT DEFAULT 'unknown',
+    payment_date TEXT,
+    payment_method TEXT,
+    final_filename TEXT,
+    routing_confidence REAL DEFAULT 0,
+    worksite_external_id TEXT,
+    client_external_id TEXT,
+    interfast_target_type TEXT,
+    interfast_target_id TEXT,
+    interfast_sync_status TEXT NOT NULL DEFAULT 'pending',
     confidence REAL DEFAULT 0,
     current_stage TEXT NOT NULL DEFAULT 'ingested',
     validation_status TEXT NOT NULL DEFAULT 'pending',
@@ -71,6 +86,19 @@ CREATE TABLE IF NOT EXISTS validation_tasks (
     corrected_payload_json TEXT,
     validator_name TEXT,
     validation_notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS routing_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    proposed_payload_json TEXT NOT NULL,
+    corrected_payload_json TEXT,
+    validator_name TEXT,
+    routing_notes TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -185,6 +213,19 @@ CREATE TABLE IF NOT EXISTS processed_emails (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS dispatch_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    target_system TEXT NOT NULL,
+    request_payload_json TEXT NOT NULL DEFAULT '{}',
+    response_payload_json TEXT,
+    external_id TEXT,
+    status TEXT NOT NULL,
+    retryable INTEGER NOT NULL DEFAULT 0,
+    error_text TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS worker_state (
     state_key TEXT PRIMARY KEY,
     state_value TEXT NOT NULL,
@@ -204,11 +245,13 @@ CREATE TABLE IF NOT EXISTS job_runs (
 CREATE INDEX IF NOT EXISTS idx_documents_stage ON documents(current_stage, validation_status);
 CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id);
 CREATE INDEX IF NOT EXISTS idx_validation_tasks_status ON validation_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_routing_tasks_status ON routing_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_accounting_entries_export_status ON accounting_entries(export_status);
 CREATE INDEX IF NOT EXISTS idx_interfast_entities_type ON interfast_entities(entity_type);
 CREATE INDEX IF NOT EXISTS idx_bank_transactions_status ON bank_transactions(status);
 CREATE INDEX IF NOT EXISTS idx_bank_matches_transaction ON bank_matches(bank_transaction_id);
 CREATE INDEX IF NOT EXISTS idx_processed_emails_mailbox_uid ON processed_emails(mailbox_uid);
+CREATE INDEX IF NOT EXISTS idx_dispatch_attempts_document ON dispatch_attempts(document_id, created_at);
 """
 
 
@@ -226,7 +269,81 @@ def init_db(settings: Settings | None = None) -> None:
     ensure_runtime_directories(current)
     with get_connection(current) as connection:
         connection.executescript(SCHEMA)
+        _migrate_schema(connection)
         connection.commit()
+
+
+def _get_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def _ensure_columns(connection: sqlite3.Connection, table_name: str, definitions: dict[str, str]) -> None:
+    existing = _get_columns(connection, table_name)
+    for column_name, definition in definitions.items():
+        if column_name in existing:
+            continue
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+
+def _migrate_schema(connection: sqlite3.Connection) -> None:
+    _ensure_columns(
+        connection,
+        "documents",
+        {
+            "source_subject": "TEXT",
+            "source_sender": "TEXT",
+            "source_body": "TEXT",
+            "document_kind": "TEXT",
+            "supply_type": "TEXT",
+            "payment_status": "TEXT DEFAULT 'unknown'",
+            "payment_date": "TEXT",
+            "payment_method": "TEXT",
+            "final_filename": "TEXT",
+            "routing_confidence": "REAL DEFAULT 0",
+            "worksite_external_id": "TEXT",
+            "client_external_id": "TEXT",
+            "interfast_target_type": "TEXT",
+            "interfast_target_id": "TEXT",
+            "interfast_sync_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "batch_token": "TEXT",
+        },
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_documents_batch_token ON documents(batch_token)")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS routing_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            token TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            proposed_payload_json TEXT NOT NULL,
+            corrected_payload_json TEXT,
+            validator_name TEXT,
+            routing_notes TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dispatch_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            target_system TEXT NOT NULL,
+            request_payload_json TEXT NOT NULL DEFAULT '{}',
+            response_payload_json TEXT,
+            external_id TEXT,
+            status TEXT NOT NULL,
+            retryable INTEGER NOT NULL DEFAULT 0,
+            error_text TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_routing_tasks_status ON routing_tasks(status)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_dispatch_attempts_document ON dispatch_attempts(document_id, created_at)")
 
 
 @contextmanager

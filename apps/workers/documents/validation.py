@@ -7,6 +7,7 @@ from typing import Any
 from apps.workers.common.database import get_connection, init_db
 from apps.workers.common.schemas import OCRNormalized, ValidationDecision
 from apps.workers.common.settings import Settings, get_settings
+from apps.workers.routing.service import ensure_routing_task
 
 
 def get_validation_task(token: str, settings: Settings | None = None) -> dict[str, Any] | None:
@@ -16,7 +17,8 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
         row = connection.execute(
             """
             SELECT vt.id AS task_id, vt.token, vt.status, vt.extracted_payload_json, vt.corrected_payload_json,
-                   d.id AS document_id, d.source_name, d.archived_path, d.current_stage, d.validation_status
+                   d.id AS document_id, d.source_name, d.archived_path, d.current_stage, d.validation_status,
+                   d.document_kind, d.supply_type
             FROM validation_tasks vt
             JOIN documents d ON d.id = vt.document_id
             WHERE vt.token = ?
@@ -34,6 +36,8 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
             "archived_path": row["archived_path"],
             "current_stage": row["current_stage"],
             "validation_status": row["validation_status"],
+            "document_kind": row["document_kind"],
+            "supply_type": row["supply_type"],
             "extracted_payload": json.loads(row["extracted_payload_json"]),
             "corrected_payload": json.loads(row["corrected_payload_json"]) if row["corrected_payload_json"] else None,
         }
@@ -77,13 +81,15 @@ def apply_validation(token: str, decision: ValidationDecision, settings: Setting
             connection.execute(
                 """
                 UPDATE documents
-                SET supplier_name = ?, supplier_siret = ?, invoice_number = ?, invoice_date = ?, due_date = ?,
+                SET document_kind = ?, supply_type = ?, supplier_name = ?, supplier_siret = ?, invoice_number = ?, invoice_date = ?, due_date = ?,
                     currency = ?, net_amount = ?, vat_amount = ?, gross_amount = ?, project_ref = ?, document_type = ?,
                     validation_status = 'approved', current_stage = 'validated', validated_payload_json = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
+                    corrected.document_kind,
+                    corrected.supply_type,
                     corrected.supplier_name,
                     corrected.supplier_siret,
                     corrected.invoice_number,
@@ -133,6 +139,8 @@ def apply_validation(token: str, decision: ValidationDecision, settings: Setting
             ),
         )
         connection.commit()
+    if decision.decision == "approve":
+        ensure_routing_task(task["document_id"], force_refresh=True, settings=current)
 
     return {
         "document_id": task["document_id"],

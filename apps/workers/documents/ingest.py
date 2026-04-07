@@ -56,10 +56,18 @@ def ingest_document(
 
         document_cursor = connection.execute(
             """
-            INSERT INTO documents(source_kind, source_name, archived_path, metadata_json)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO documents(source_kind, source_name, source_subject, source_sender, source_body, archived_path, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (source_kind, source_name or path.name, str(stored_path), json.dumps(metadata, ensure_ascii=False)),
+            (
+                source_kind,
+                source_name or path.name,
+                metadata.get("subject"),
+                metadata.get("sender_email") or metadata.get("from"),
+                metadata.get("body"),
+                str(stored_path),
+                json.dumps(metadata, ensure_ascii=False),
+            ),
         )
         document_id = int(document_cursor.lastrowid)
         connection.execute(

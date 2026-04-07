@@ -1,8 +1,8 @@
 # Plateforme d'automatisation comptable
 
-Stack NAS-first pour automatiser la réception documentaire, l'OCR, la validation humaine, l'écriture Excel, le rapprochement bancaire, les écritures comptables, les exports Inexweb et le DOE.
+Stack NAS-first pour automatiser la réception documentaire, l'OCR, la double validation humaine, le classement NAS, l'écriture Excel, le rapprochement bancaire, les écritures comptables, les exports Inexweb, le dispatch InterFast et le DOE.
 
-Le repo inclut aussi un POC local `Gmail -> OCR -> reponse email` qui peut tourner sur une machine locale avant migration vers un Synology.
+Le repo inclut un worker local `Gmail -> OCR -> routing review -> dispatch` qui peut tourner sur une machine locale avant migration vers un Synology.
 
 ## Composants
 
@@ -45,6 +45,9 @@ python -m apps.workers.cli export-inexweb
 python -m apps.workers.cli rebuild-doe --project-id 1
 python -m apps.workers.cli mail-worker --once
 python -m apps.workers.cli mail-worker
+python -m apps.workers.cli route-document --document-id 1
+python -m apps.workers.cli dispatch-document --document-id 1
+python -m apps.workers.cli weekly-accounting
 ```
 
 ## POC local Gmail
@@ -75,4 +78,4 @@ python -m apps.workers.cli mail-worker --once
 python -m apps.workers.cli mail-worker
 ```
 
-Le worker traite les emails non lus avec pièce jointe, archive les fichiers localement, appelle Mistral OCR et renvoie un email de synthèse à `REPLY_TO_EMAIL`.
+Le worker traite les emails non lus avec pièce jointe, archive les fichiers localement, appelle Mistral OCR, crée une validation OCR si nécessaire, crée ensuite une validation de routage, puis dispatch le document après validation humaine.

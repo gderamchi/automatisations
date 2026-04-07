@@ -16,6 +16,8 @@ class OCRLineItem(BaseModel):
 
 class OCRNormalized(BaseModel):
     document_type: Literal["purchase_invoice", "sales_invoice", "credit_note", "unknown"] = "purchase_invoice"
+    document_kind: str | None = None
+    supply_type: str | None = None
     supplier_name: str | None = None
     supplier_siret: str | None = None
     invoice_number: str | None = None
@@ -31,6 +33,7 @@ class OCRNormalized(BaseModel):
     source_file_id: int | None = None
     raw_text: str | None = None
     missing_fields: list[str] = Field(default_factory=list)
+    manual_hints: dict[str, Any] = Field(default_factory=dict)
 
 
 class ValidationDecision(BaseModel):
@@ -38,6 +41,32 @@ class ValidationDecision(BaseModel):
     validator_name: str
     notes: str | None = None
     corrected_data: OCRNormalized | None = None
+
+
+class RoutingProposal(BaseModel):
+    document_kind: str = "unknown"
+    supply_type: str = "unknown"
+    final_filename: str | None = None
+    routing_confidence: float = 0.0
+    client_external_id: str | None = None
+    worksite_external_id: str | None = None
+    interfast_target_type: str | None = None
+    interfast_target_id: str | None = None
+    interfast_write_mode: str = "disabled"
+    target_label: str | None = None
+    standard_path: str | None = None
+    accounting_path: str | None = None
+    worksite_path: str | None = None
+    manual_hints: dict[str, Any] = Field(default_factory=dict)
+    matching_notes: list[str] = Field(default_factory=list)
+    ambiguous_match: bool = False
+
+
+class RoutingDecision(BaseModel):
+    decision: Literal["approve", "reject", "request-fix"]
+    validator_name: str
+    notes: str | None = None
+    corrected_data: RoutingProposal | None = None
 
 
 class IngestRequest(BaseModel):

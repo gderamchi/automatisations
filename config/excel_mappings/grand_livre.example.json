@@ -1,0 +1,17 @@
+{
+  "workbook_path": "${DATA_ROOT}/state/cache/grand_livre.xlsx",
+  "sheet": "GrandLivre",
+  "start_row": 2,
+  "template_row": 2,
+  "key_column": "A",
+  "columns": {
+    "invoice_date": "A",
+    "supplier_name": "B",
+    "invoice_number": "C",
+    "net_amount": "D",
+    "vat_amount": "E",
+    "gross_amount": "F",
+    "payment_status": "G",
+    "payment_date": "H"
+  }
+}

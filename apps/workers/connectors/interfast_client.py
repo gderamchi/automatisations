@@ -42,25 +42,36 @@ class InterfastClient:
         url = urljoin(f"{self.settings.interfast_base_url.rstrip('/')}/", entity_config["path"].lstrip("/"))
         headers = {key: substitute_env(value) for key, value in self.config.get("headers", {}).items()}
         if self.settings.interfast_api_key:
-            headers.setdefault("Authorization", f"Bearer {self.settings.interfast_api_key}")
+            headers.setdefault("X-API-KEY", self.settings.interfast_api_key)
 
         params = dict(entity_config.get("params", {}))
         updated_after_param = entity_config.get("updated_after_param")
         if since and updated_after_param and not force_full:
             params[updated_after_param] = since
 
-        with httpx.Client(timeout=self.settings.interfast_timeout_seconds) as client:
-            response = client.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            payload = response.json()
-
         list_field = entity_config.get("list_field")
-        if list_field:
-            items = payload.get(list_field, [])
-        elif isinstance(payload, list):
-            items = payload
-        else:
-            items = payload.get("items", [])
-        if not isinstance(items, list):
-            raise RuntimeError(f"Unexpected payload for entity {entity_type}: expected a list")
-        return items
+        all_items: list[dict[str, Any]] = []
+
+        with httpx.Client(timeout=self.settings.interfast_timeout_seconds) as client:
+            while True:
+                response = client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                payload = response.json()
+
+                if list_field:
+                    items = payload.get(list_field, [])
+                elif isinstance(payload, list):
+                    items = payload
+                else:
+                    items = payload.get("items", [])
+                if not isinstance(items, list):
+                    raise RuntimeError(f"Unexpected payload for entity {entity_type}: expected a list")
+                all_items.extend(items)
+
+                pageable = payload.get("pageable", {}) if isinstance(payload, dict) else {}
+                total = payload.get("count", 0) if isinstance(payload, dict) else 0
+                if not pageable or not items or len(all_items) >= total:
+                    break
+                params["page"] = str(int(params.get("page", "1")) + 1)
+
+        return all_items

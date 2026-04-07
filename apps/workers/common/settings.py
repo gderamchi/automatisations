@@ -47,17 +47,34 @@ class Settings(BaseSettings):
     interfast_base_url: str | None = None
     interfast_api_key: str | None = None
     interfast_timeout_seconds: int = 30
+    interfast_write_mode: str = "disabled"
+    interfast_attachment_field_name: str = "file"
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
     export_delimiter: str = ";"
     export_encoding: str = "utf-8-sig"
     bank_match_certain_threshold: float = 0.92
     bank_match_probable_threshold: float = 0.70
+    routing_match_threshold: float = 0.72
+    routing_match_gap: float = 0.10
+    routing_auto_approve_threshold: float = 0.85
+    routing_auto_dispatch: bool = True
     dashboard_refresh_seconds: int = 30
     app_timezone: str = "Europe/Paris"
     request_timeout_seconds: int = 30
     app_name: str = "automatisations-platform"
+    public_base_url: str = "http://localhost:9000"
     default_excel_mapping: str = "purchases"
+    default_excel_mappings: list[str] = Field(
+        default_factory=lambda: [
+            "grand_livre",
+            "tresorerie",
+            "chantiers",
+            "tva",
+        ]
+    )
+    weekly_accounting_recipient: str | None = None
+    weekly_accounting_subject_prefix: str = "COMPTABILITÉ"
     doe_expected_documents: list[str] = Field(
         default_factory=lambda: [
             "devis",
@@ -132,6 +149,18 @@ class Settings(BaseSettings):
         return self.data_root / "docs"
 
     @property
+    def classified_standard_dir(self) -> Path:
+        return self.data_root / "classified" / "standard"
+
+    @property
+    def classified_accounting_dir(self) -> Path:
+        return self.data_root / "classified" / "accounting"
+
+    @property
+    def classified_worksites_dir(self) -> Path:
+        return self.data_root / "classified" / "worksites"
+
+    @property
     def all_managed_directories(self) -> list[Path]:
         return [
             self.incoming_email_dir,
@@ -145,6 +174,9 @@ class Settings(BaseSettings):
             self.state_cache_dir,
             self.state_logs_dir,
             self.docs_runtime_dir,
+            self.classified_standard_dir,
+            self.classified_accounting_dir,
+            self.classified_worksites_dir,
         ]
 
 
