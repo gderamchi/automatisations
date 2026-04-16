@@ -12,10 +12,16 @@ fi
 export PATH="$ROOT_DIR/.venv/bin:/opt/homebrew/bin:$PATH"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
-  set -a
-  # Load repo config so IMAP/SMTP/Mistral values are visible to the shell.
-  source "$ROOT_DIR/.env"
-  set +a
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" != *"="* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      *[!A-Z0-9_]*|"") continue ;;
+    esac
+    export "$key=$value"
+  done < "$ROOT_DIR/.env"
 fi
 
 cleanup() {
