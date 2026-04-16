@@ -11,6 +11,13 @@ fi
 
 export PATH="$ROOT_DIR/.venv/bin:/opt/homebrew/bin:$PATH"
 
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # Load repo config so IMAP/SMTP/Mistral values are visible to the shell.
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
 cleanup() {
   if [[ -n "${API_PID:-}" ]] && kill -0 "$API_PID" 2>/dev/null; then
     kill "$API_PID" 2>/dev/null || true
@@ -29,7 +36,7 @@ API_PID=$!
 
 WORKER_PID=""
 if [[ -n "${IMAP_USERNAME:-}" && -n "${IMAP_PASSWORD:-}" ]]; then
-  "$ROOT_DIR/scripts/run_mail_worker.sh" --once &
+  "$ROOT_DIR/scripts/run_mail_worker.sh" &
   WORKER_PID=$!
 else
   echo "Skipping mail worker: IMAP_USERNAME/IMAP_PASSWORD are not set" >&2
