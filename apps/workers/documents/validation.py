@@ -18,7 +18,7 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
             """
             SELECT vt.id AS task_id, vt.token, vt.status, vt.extracted_payload_json, vt.corrected_payload_json,
                    d.id AS document_id, d.source_name, d.archived_path, d.current_stage, d.validation_status,
-                   d.document_kind, d.supply_type
+                   d.document_kind, d.supply_type, d.normalized_payload_json, d.validated_payload_json
             FROM validation_tasks vt
             JOIN documents d ON d.id = vt.document_id
             WHERE vt.token = ?
@@ -27,10 +27,17 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
         ).fetchone()
         if not row:
             return None
+        payload_json = row["extracted_payload_json"]
+        corrected_payload_json = row["corrected_payload_json"]
+        status = row["status"]
+        if row["validation_status"] == "approved":
+            payload_json = row["validated_payload_json"] or row["normalized_payload_json"] or payload_json
+            corrected_payload_json = corrected_payload_json or payload_json
+            status = "approve"
         return {
             "task_id": row["task_id"],
             "token": row["token"],
-            "status": row["status"],
+            "status": status,
             "document_id": row["document_id"],
             "source_name": row["source_name"],
             "archived_path": row["archived_path"],
@@ -38,8 +45,8 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
             "validation_status": row["validation_status"],
             "document_kind": row["document_kind"],
             "supply_type": row["supply_type"],
-            "extracted_payload": json.loads(row["extracted_payload_json"]),
-            "corrected_payload": json.loads(row["corrected_payload_json"]) if row["corrected_payload_json"] else None,
+            "extracted_payload": json.loads(payload_json),
+            "corrected_payload": json.loads(corrected_payload_json) if corrected_payload_json else None,
         }
 
 

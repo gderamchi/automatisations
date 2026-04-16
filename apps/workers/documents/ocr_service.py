@@ -480,7 +480,7 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
         if validation_required:
             existing = connection.execute(
                 """
-                SELECT token FROM validation_tasks
+                SELECT id, token FROM validation_tasks
                 WHERE document_id = ? AND status = 'pending'
                 ORDER BY id DESC
                 LIMIT 1
@@ -488,7 +488,16 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
                 (document_id,),
             ).fetchone()
             token = existing["token"] if existing else secrets.token_urlsafe(18)
-            if not existing:
+            if existing:
+                connection.execute(
+                    """
+                    UPDATE validation_tasks
+                    SET extracted_payload_json = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (normalized.model_dump_json(), existing["id"]),
+                )
+            else:
                 connection.execute(
                     """
                     INSERT INTO validation_tasks(document_id, token, extracted_payload_json)
@@ -496,6 +505,18 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
                     """,
                     (document_id, token, normalized.model_dump_json()),
                 )
+        else:
+            connection.execute(
+                """
+                UPDATE validation_tasks
+                SET status = 'approve',
+                    extracted_payload_json = ?,
+                    corrected_payload_json = COALESCE(corrected_payload_json, ?),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE document_id = ? AND status = 'pending'
+                """,
+                (normalized.model_dump_json(), normalized.model_dump_json(), document_id),
+            )
 
         connection.commit()
         if not validation_required:
