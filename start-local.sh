@@ -24,6 +24,8 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   done < "$ROOT_DIR/.env"
 fi
 
+export PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1:${API_PORT:-8080}}"
+
 cleanup() {
   if [[ -n "${API_PID:-}" ]] && kill -0 "$API_PID" 2>/dev/null; then
     kill "$API_PID" 2>/dev/null || true

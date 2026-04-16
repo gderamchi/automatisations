@@ -643,6 +643,10 @@ def _format_attachment_result(result: dict[str, Any], base_url: str) -> str:
 
     validation_required = result.get("validation_required", False)
     auto_approved = result.get("auto_approved", False)
+    validation_token = result.get("validation_token")
+    validation_link = f"{base_url}/validate/{validation_token}" if validation_token else None
+    routing_token = result.get("routing_token")
+    routing_link = f"{base_url}/route/{routing_token}" if routing_token else None
 
     interfast_link = result.get("interfast_link")
 
@@ -650,9 +654,15 @@ def _format_attachment_result(result: dict[str, Any], base_url: str) -> str:
         line = f"  - {summary} → classé automatiquement"
         return f"{line}\n    Voir sur InterFast : {interfast_link}" if interfast_link else line
     elif validation_required:
-        return f"  - [A VERIFIER] {summary}"
-    elif result.get("routing_token"):
-        return f"  - [A VERIFIER] {summary} — chantier à confirmer"
+        line = f"  - [A VERIFIER] {summary}"
+        if validation_link:
+            line += f"\n    Valider le document : {validation_link}"
+        return line
+    elif routing_token:
+        line = f"  - [A VERIFIER] {summary} — chantier à confirmer"
+        if routing_link:
+            line += f"\n    Confirmer le chantier : {routing_link}"
+        return line
     elif result.get("duplicate"):
         return f"  - {summary} → déjà classé"
     else:
