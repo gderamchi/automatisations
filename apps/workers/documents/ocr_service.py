@@ -38,6 +38,20 @@ NOISY_SUPPLIER_LINES = {
     "invoice",
 }
 
+LEGAL_ENTITY_MARKERS = (
+    "succursale",
+    "s.à r.l",
+    "s.a.r.l",
+    "sarl",
+    "sas",
+    "sasu",
+    "eurl",
+    "llc",
+    "ltd",
+    "inc",
+    "gmbh",
+)
+
 
 def parse_french_decimal(raw: str | None) -> Decimal | None:
     if not raw:
@@ -88,6 +102,15 @@ def first_pattern(text: str, patterns: list[str]) -> str | None:
     return None
 
 
+def _looks_like_legal_supplier_line(line: str) -> bool:
+    lowered = normalize_space(line.lower()) or ""
+    if not lowered:
+        return False
+    if lowered.startswith(("adresse de facturation", "adresse de livraison")):
+        return False
+    return any(marker in lowered for marker in LEGAL_ENTITY_MARKERS)
+
+
 def extract_supplier_name(text: str) -> str | None:
     priority_patterns = [
         r"TVA déclarée par\s+([^\n]+)",
@@ -100,6 +123,11 @@ def extract_supplier_name(text: str) -> str | None:
             candidate = candidate.lstrip("#").strip()
         if candidate and candidate.lower() not in NOISY_SUPPLIER_LINES:
             return candidate[:150]
+
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("#").strip()
+        if stripped and _looks_like_legal_supplier_line(stripped):
+            return stripped[:150]
 
     for line in text.splitlines():
         stripped = line.strip().lstrip("#").strip()
@@ -171,28 +199,33 @@ def extract_table_totals(text: str) -> tuple[Decimal | None, Decimal | None, Dec
     Looks for cells where a label (Total HT, Total TVA, TTC, etc.) is
     followed by an amount in the same or next cell.
     """
-    amount_in_cell = re.compile(
-        r"\|\s*([^|]*?(?:total\s+ht|montant\s+ht|net\s+ht|total\s+ttc|montant\s+ttc|net\s+[àa]\s+payer|total\s+tva|montant\s+tva|tva)[^|]*?)\s*\|",
-        flags=re.IGNORECASE,
-    )
     amount_re = re.compile(r"([0-9][0-9\s.,]*[0-9])\s*€")
 
     gross: Decimal | None = None
     net: Decimal | None = None
     vat: Decimal | None = None
+    rows: list[list[str]] = []
 
     for line in text.splitlines():
         if "|" not in line:
             continue
         cells = [cell.strip() for cell in line.split("|")]
+        if cells and not cells[0]:
+            cells = cells[1:]
+        if cells and not cells[-1]:
+            cells = cells[:-1]
+        if not cells:
+            continue
+        rows.append(cells)
         for i, cell in enumerate(cells):
-            lowered = cell.lower()
-            is_ht = any(k in lowered for k in ("total ht", "montant ht", "net ht"))
+            lowered = normalize_space(cell.lower()) or ""
+            is_ht = any(k in lowered for k in ("hors tva total", "total ht", "montant ht", "net ht"))
             is_ttc = any(k in lowered for k in ("total ttc", "montant ttc", "net à payer", "net a payer"))
             is_tva = any(k in lowered for k in ("total tva", "montant tva")) or (
                 "tva" in lowered and "%" in lowered
             )
-            if not (is_ht or is_ttc or is_tva):
+            is_total_line = lowered.rstrip(":") == "total"
+            if not (is_ht or is_ttc or is_tva or is_total_line):
                 continue
             # Amount is in subsequent cells (not the label cell — avoids catching percentages)
             for candidate in cells[i + 1 :]:
@@ -202,13 +235,50 @@ def extract_table_totals(text: str) -> tuple[Decimal | None, Decimal | None, Dec
                 if match:
                     value = parse_french_decimal(match.group(1))
                     if value and value > 0:
-                        if is_ttc and gross is None:
+                        if is_total_line and gross is None:
+                            gross = value
+                        elif is_ttc and gross is None:
                             gross = value
                         elif is_ht and net is None:
                             net = value
                         elif is_tva and vat is None:
                             vat = value
                         break
+
+    for index, row in enumerate(rows):
+        label_positions: dict[str, int] = {}
+        for column, cell in enumerate(row):
+            lowered = normalize_space(cell.lower()) or ""
+            if "hors tva total" in lowered or "total ht" in lowered or "montant ht" in lowered or "net ht" in lowered:
+                label_positions.setdefault("net", column)
+            elif "total ttc" in lowered or "montant ttc" in lowered or "net à payer" in lowered or "net a payer" in lowered:
+                label_positions.setdefault("gross", column)
+            elif "tva total" in lowered or "total tva" in lowered or "montant tva" in lowered:
+                label_positions.setdefault("vat", column)
+
+        if not label_positions:
+            continue
+
+        for next_row in rows[index + 1 :]:
+            amount_positions: dict[int, Decimal] = {}
+            for column, cell in enumerate(next_row):
+                if "%" in cell and "€" not in cell:
+                    continue
+                match = amount_re.search(cell)
+                if match:
+                    value = parse_french_decimal(match.group(1))
+                    if value is not None:
+                        amount_positions[column] = value
+            if not amount_positions:
+                continue
+
+            if net is None and "net" in label_positions:
+                net = amount_positions.get(label_positions["net"], net)
+            if vat is None and "vat" in label_positions:
+                vat = amount_positions.get(label_positions["vat"], vat)
+            if gross is None and "gross" in label_positions:
+                gross = amount_positions.get(label_positions["gross"], gross)
+            break
 
     return gross, net, vat
 
@@ -229,7 +299,7 @@ def normalize_ocr_payload(
     invoice_number = first_pattern(
         text,
         [
-            r"(?:num[eé]ro de la facture|invoice number|facture number)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/_.-]{2,})",
+            r"(?:num[eé]ro(?:\s+de)?(?:\s+la)?\s+facture|invoice number|facture number)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/_.-]{2,})",
             r"^(?:facture|invoice)\s*(?:n(?:[°o])?|num(?:ero)?)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9\/_-]{2,})\s*$",
             r"(?:ref(?:erence)?|pi[eè]ce)\s*[:#\s-]*([A-Z0-9][A-Z0-9\/_-]{2,})",
         ],
@@ -239,7 +309,7 @@ def normalize_ocr_payload(
         first_pattern(
             text,
             [
-                r"date de la facture(?:\s*/\s*date de\s*la livraison)?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
+                r"date de la facture(?:\s*/\s*date de(?:\s+la)?\s+[^\n:]+)?\s*[:#-]?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
                 r"(?:date(?: de)? facture|date d[‘’]emission|date de la facture/date de la livraison|date de la facture|date de livraison|date)\s*[:#-]?\s*([0-9]{2}[./-][0-9]{2}[./-][0-9]{4})",
                 r"(?:le\s+)?(\d{1,2}\s+(?:" + _french_months_alt + r")\s+\d{4})",
             ],
@@ -260,6 +330,7 @@ def normalize_ocr_payload(
                 r"(?:net\s+[àa]\s+payer\s+ttc|total\s+ttc|montant\s+ttc)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
                 r"(?:total\s+[àa]\s+payer|facture\s+total)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
                 r"(?:net\s+[àa]\s+payer)\s*[:#|]?\s*([0-9][0-9\s.,]*[0-9])\s*€?",
+                r"^\|\s*total\s*:?\s*\|\s*([0-9][0-9\s.,]*[0-9])\s*€?",
             ],
         )
     )

@@ -123,3 +123,56 @@ def amazon_paid_invoice_text() -> str:
             "Facture Total 19,99 €",
         ]
     )
+
+
+@pytest.fixture()
+def amazon_webp_invoice_text() -> str:
+    return "\n".join(
+        [
+            "amazon.fr",
+            "",
+            "FACTURE",
+            "",
+            "Adresse de facturation:",
+            "pascal perez",
+            "Lieu-dit Lapaul",
+            "locoal mendon, 56550",
+            "FR",
+            "",
+            "Amazon EU S.à r.l., Succursale Française",
+            "67 Boulevard du General Leclerc",
+            "Clichy 92110",
+            "France",
+            "TVA: FR12487773327",
+            "",
+            "Adresse de livraison:",
+            "pascal perez",
+            "Lieu-dit Lapaul",
+            "locoal mendon, 56550",
+            "FR",
+            "",
+            "Numéro de commande: 407-8996267-5607556",
+            "Date de la commande: 28.12.2016",
+            "Numéro de facture: EUVINS1-OFS-FR-305509734",
+            "Date de la facture/Date de la provision: 28.12.2016",
+            "",
+            "| Qte | Description de l'article | Prix Unitaire (hors TVA) | Taux TVA% | Prix Unitaire (inclus TVA) | Prix Total (inclus TVA) |",
+            "| --- | --- | --- | --- | --- | --- |",
+            "| 1 | Spirit of Gamer Xgames Power Series Alimentation PC 750 W | B00VWXH8FO | 53,33 € | 20 % | 63,99 € | 63,99 € |",
+            "| TOTAL: | 63,99 € |",
+            "|  Hors TVA Total | TVA Total | TVA TOTAL  |",
+            "| --- | --- | --- |",
+            "|  20 % | 20 % |   |",
+            "|  53,33 € | 10,66 € | 10,66 €  |",
+            "",
+            "Nos prix des équipements électriques et électroniques incluent l'éco-participation, conformément à l'article L. 541-10-2 du code de l'environnement.",
+            "",
+            "LU-BIO-04",
+            "",
+            "Amazon EU S.à r.l. - 5 Rue Plaete, L-2338 Luxembourg",
+            "R.C.S. Luxembourg : B 101818",
+            "",
+            "Amazon EU S.à r.l., Succursale Française - 67 Boulevard du Général Leclerc, 92110 Clichy,",
+            "France SIREN : 487773327 • RCS Nanterre • APE : 4791B • TVA : FR 12487773327",
+        ]
+    )
