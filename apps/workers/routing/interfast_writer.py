@@ -73,7 +73,7 @@ class ExpenseCreateAdapter(InterfastWriteAdapter):
         doc_payload = self._load_document_payload(document["id"])
         supplier_interfast_id = self._find_supplier_id(doc_payload.get("supplier_name"))
         expense_body = {
-            "name": self._build_expense_name(doc_payload),
+            "name": self._build_expense_name(doc_payload, document.get("expense_label")),
             "amountTTC": float(doc_payload["gross_amount"]) if doc_payload.get("gross_amount") else 0,
             "amountHT": float(doc_payload["net_amount"]) if doc_payload.get("net_amount") else 0,
             "issuedAt": f"{doc_payload['invoice_date']}T00:00:00.000Z" if doc_payload.get("invoice_date") else None,
@@ -164,7 +164,9 @@ class ExpenseCreateAdapter(InterfastWriteAdapter):
             "error_text": None if response.is_success else response.text,
         }
 
-    def _build_expense_name(self, payload: dict[str, Any]) -> str:
+    def _build_expense_name(self, payload: dict[str, Any], explicit_label: str | None = None) -> str:
+        if explicit_label:
+            return explicit_label
         supplier = (payload.get("supplier_name") or "Fournisseur").lstrip("#").strip()
         parts = [
             supplier,

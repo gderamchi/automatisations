@@ -49,6 +49,16 @@ HINT_ALIASES = {
     "interfast_id": "interfast_id",
 }
 
+EXPENSE_LABEL_PREFIXES = {
+    "carburant": "Achat de carburant",
+    "materiel": "Achat de matériel",
+    "hotel": "Hébergement",
+    "repas": "Repas au restaurant",
+    "peage": "Billet de péage",
+    "consommable": "Achats divers",
+    "unknown": "Dépense",
+}
+
 
 def parse_manual_hints(subject: str | None, body: str | None) -> dict[str, str]:
     hints: dict[str, str] = {}
@@ -90,6 +100,22 @@ def _load_document_context(document_id: int, settings: Settings) -> dict[str, An
     document = dict(row)
     payload_json = document.get("validated_payload_json") or document.get("normalized_payload_json")
     payload = json.loads(payload_json) if payload_json else {}
+    for field in (
+        "document_kind",
+        "supply_type",
+        "supplier_name",
+        "supplier_siret",
+        "invoice_number",
+        "invoice_date",
+        "due_date",
+        "currency",
+        "net_amount",
+        "vat_amount",
+        "gross_amount",
+        "project_ref",
+    ):
+        if document.get(field) not in (None, ""):
+            payload[field] = document[field]
     metadata = json.loads(document.get("metadata_json") or "{}")
     hints = parse_manual_hints(document.get("source_subject"), document.get("source_body"))
     if isinstance(payload.get("manual_hints"), dict):
@@ -103,6 +129,88 @@ def _load_document_context(document_id: int, settings: Settings) -> dict[str, An
         "hints": hints,
     }
     return context
+
+
+def _normalize_supplier_for_expense_label(raw_value: str | None) -> str:
+    supplier = str(raw_value or "").strip().lstrip("#").strip()
+    if not supplier:
+        return "fournisseur"
+    lowered = supplier.lower()
+    if "amazon" in lowered:
+        return "Amazon"
+    replacements = [
+        "succursale française",
+        "succursale francaise",
+        "s.à r.l.",
+        "s.a.r.l.",
+        "sarl",
+        "sas",
+        "sasu",
+        "eurl",
+        "llc",
+        "ltd",
+        "inc",
+    ]
+    cleaned = supplier
+    for token in replacements:
+        cleaned = cleaned.replace(token, "").replace(token.title(), "").strip(" ,-")
+    return cleaned or supplier
+
+
+def _build_expense_label(context: dict[str, Any], proposal: RoutingProposal) -> str:
+    payload = context["payload"]
+    supplier = _normalize_supplier_for_expense_label(payload.get("supplier_name"))
+    prefix = EXPENSE_LABEL_PREFIXES.get(proposal.supply_type or "unknown", EXPENSE_LABEL_PREFIXES["unknown"])
+    if proposal.supply_type == "unknown" and proposal.document_kind == "purchase_order":
+        prefix = "Commande"
+    return f"{prefix} {supplier}".strip()
+
+
+def list_worksite_options(settings: Settings | None = None) -> list[dict[str, str | None]]:
+    current = settings or get_settings()
+    init_db(current)
+    with get_connection(current) as connection:
+        rows = connection.execute(
+            """
+            SELECT external_project_id, project_code, project_name, metadata_json
+            FROM doe_projects
+            ORDER BY project_code ASC, project_name ASC
+            """
+        ).fetchall()
+    options: list[dict[str, str | None]] = []
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        client = metadata.get("client") or {}
+        label = " ".join(filter(None, [row["project_code"], row["project_name"]])).strip() or row["project_name"]
+        options.append(
+            {
+                "external_project_id": str(row["external_project_id"]) if row["external_project_id"] else None,
+                "project_code": row["project_code"],
+                "project_name": row["project_name"],
+                "label": label,
+                "client_external_id": str(client.get("id") or metadata.get("clientId") or "") or None,
+                "client_name": client.get("name") or None,
+                "status": metadata.get("status") or None,
+            }
+        )
+    return options
+
+
+def _apply_worksite_selection(proposal: RoutingProposal, settings: Settings) -> RoutingProposal:
+    if not proposal.worksite_external_id:
+        return proposal
+    options = {
+        option["external_project_id"]: option
+        for option in list_worksite_options(settings)
+        if option["external_project_id"]
+    }
+    selected = options.get(str(proposal.worksite_external_id))
+    if not selected:
+        return proposal
+    proposal.worksite_external_id = str(selected["external_project_id"])
+    proposal.target_label = selected["project_name"] or selected["label"]
+    proposal.client_external_id = selected["client_external_id"] or proposal.client_external_id
+    return proposal
 
 
 def _normalize_kind(payload: dict[str, Any], hints: dict[str, str]) -> str:
@@ -249,13 +357,32 @@ def _build_final_filename(context: dict[str, Any], proposal: RoutingProposal) ->
         date_part = str(invoice_date)[:10] if invoice_date else datetime.utcnow().date().isoformat()
     except Exception:
         date_part = datetime.utcnow().date().isoformat()
-    supplier = slugify(payload.get("supplier_name") or "inconnu").replace("-", "_").upper()[:40] or "INCONNU"
-    kind = slugify(proposal.document_kind or "unknown").replace("-", "_").upper()[:24] or "UNKNOWN"
-    supply = slugify(proposal.supply_type or "unknown").replace("-", "_").upper()[:24] or "UNKNOWN"
-    chantier = slugify(context["hints"].get("chantier") or payload.get("project_ref") or proposal.target_label or "sans-chantier").replace("-", "_").upper()[:40]
+    label = slugify(proposal.expense_label or payload.get("supplier_name") or "document")[:80] or "document"
+    chantier = slugify(proposal.target_label or payload.get("project_ref") or "sans-chantier")[:40]
     amount = _to_decimal(payload.get("gross_amount"))
     amount_part = f"{amount:.2f}" if amount is not None else "0.00"
-    return f"{date_part}_{kind}_{supplier}_{supply}_{chantier}_{amount_part}.pdf"
+    return f"{date_part}_{label}_{chantier}_{amount_part}.pdf"
+
+
+def hydrate_routing_proposal(
+    document_id: int,
+    proposal: RoutingProposal,
+    settings: Settings | None = None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> RoutingProposal:
+    current = settings or get_settings()
+    ctx = context or _load_document_context(document_id, current)
+    hydrated = proposal.model_copy(deep=True)
+    hydrated = _apply_worksite_selection(hydrated, current)
+    if not hydrated.target_label:
+        hydrated.target_label = ctx["payload"].get("project_ref")
+    if not hydrated.expense_label:
+        hydrated.expense_label = _build_expense_label(ctx, hydrated)
+    if not hydrated.final_filename:
+        hydrated.final_filename = _build_final_filename(ctx, hydrated)
+    hydrated.standard_path, hydrated.accounting_path, hydrated.worksite_path = _build_storage_paths(current, hydrated)
+    return hydrated
 
 
 def _build_storage_paths(settings: Settings, proposal: RoutingProposal) -> tuple[str, str, str]:
@@ -305,10 +432,13 @@ def build_routing_proposal(document_id: int, settings: Settings | None = None) -
     context = _load_document_context(document_id, current)
     payload = context["payload"]
     document_kind = _normalize_kind(payload, context["hints"])
+    supply_type = _normalize_supply_type(payload, context["hints"])
+    base_proposal = RoutingProposal(document_kind=document_kind, supply_type=supply_type)
 
     proposal = RoutingProposal(
         document_kind=document_kind,
-        supply_type=_normalize_supply_type(payload, context["hints"]),
+        supply_type=supply_type,
+        expense_label=_build_expense_label(context, base_proposal),
         interfast_write_mode=current.interfast_write_mode,
         interfast_target_type=context["hints"].get("interfast_type"),
         interfast_target_id=context["hints"].get("interfast_id"),
@@ -329,9 +459,7 @@ def build_routing_proposal(document_id: int, settings: Settings | None = None) -
         proposal.interfast_target_type, proposal.interfast_target_id = _find_interfast_target(
             context, document_kind, proposal.worksite_external_id, current,
         )
-    proposal.final_filename = _build_final_filename(context, proposal)
-    proposal.standard_path, proposal.accounting_path, proposal.worksite_path = _build_storage_paths(current, proposal)
-    return proposal
+    return hydrate_routing_proposal(document_id, proposal, current, context=context)
 
 
 def _notify_telegram(document_id: int, body: str, settings: Settings) -> None:
@@ -510,7 +638,9 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
             """
             SELECT rt.id AS task_id, rt.token, rt.status, rt.proposed_payload_json, rt.corrected_payload_json,
                    d.id AS document_id, d.source_name, d.archived_path, d.current_stage, d.validation_status,
-                   d.document_kind, d.supply_type, d.project_ref, d.routing_confidence, d.final_filename
+                   d.document_kind, d.supply_type, d.project_ref, d.routing_confidence, d.final_filename,
+                   d.validated_payload_json, d.normalized_payload_json, d.supplier_name, d.invoice_number,
+                   d.invoice_date, d.due_date, d.currency, d.net_amount, d.vat_amount, d.gross_amount
             FROM routing_tasks rt
             JOIN documents d ON d.id = rt.document_id
             WHERE rt.token = ?
@@ -519,6 +649,26 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
         ).fetchone()
     if not row:
         return None
+    document_payload = json.loads(row["validated_payload_json"] or row["normalized_payload_json"] or "{}")
+    for field in ("supplier_name", "invoice_number", "invoice_date", "due_date", "currency", "net_amount", "vat_amount", "gross_amount", "project_ref"):
+        if row[field] not in (None, ""):
+            document_payload[field] = row[field]
+    proposed = hydrate_routing_proposal(
+        row["document_id"],
+        RoutingProposal.model_validate_json(row["proposed_payload_json"]),
+        current,
+        context={"document": dict(row), "payload": document_payload, "metadata": {}, "hints": {}},
+    )
+    corrected = (
+        hydrate_routing_proposal(
+            row["document_id"],
+            RoutingProposal.model_validate_json(row["corrected_payload_json"]),
+            current,
+            context={"document": dict(row), "payload": document_payload, "metadata": {}, "hints": {}},
+        )
+        if row["corrected_payload_json"]
+        else None
+    )
     return {
         "task_id": row["task_id"],
         "token": row["token"],
@@ -533,9 +683,54 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
         "project_ref": row["project_ref"],
         "routing_confidence": row["routing_confidence"],
         "final_filename": row["final_filename"],
-        "proposed_payload": json.loads(row["proposed_payload_json"]),
-        "corrected_payload": json.loads(row["corrected_payload_json"]) if row["corrected_payload_json"] else None,
+        "document_payload": document_payload,
+        "worksite_options": list_worksite_options(current),
+        "proposed_payload": proposed.model_dump(mode="json"),
+        "corrected_payload": corrected.model_dump(mode="json") if corrected else None,
     }
+
+
+def update_document_payload_from_routing(document_id: int, payload: dict[str, Any], settings: Settings | None = None) -> None:
+    current = settings or get_settings()
+    init_db(current)
+    with get_connection(current) as connection:
+        row = connection.execute(
+            """
+            SELECT validated_payload_json, normalized_payload_json
+            FROM documents
+            WHERE id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+        if not row:
+            raise KeyError(f"Document not found: {document_id}")
+        base_payload = json.loads(row["validated_payload_json"] or row["normalized_payload_json"] or "{}")
+        merged_payload = {**base_payload, **payload}
+        payload_json = json.dumps(merged_payload, ensure_ascii=False)
+        connection.execute(
+            """
+            UPDATE documents
+            SET supplier_name = ?, invoice_number = ?, invoice_date = ?, due_date = ?, currency = ?,
+                net_amount = ?, vat_amount = ?, gross_amount = ?, project_ref = ?, normalized_payload_json = ?,
+                validated_payload_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                merged_payload.get("supplier_name"),
+                merged_payload.get("invoice_number"),
+                merged_payload.get("invoice_date"),
+                merged_payload.get("due_date"),
+                merged_payload.get("currency") or "EUR",
+                str(merged_payload.get("net_amount")) if merged_payload.get("net_amount") not in (None, "") else None,
+                str(merged_payload.get("vat_amount")) if merged_payload.get("vat_amount") not in (None, "") else None,
+                str(merged_payload.get("gross_amount")) if merged_payload.get("gross_amount") not in (None, "") else None,
+                merged_payload.get("project_ref"),
+                payload_json,
+                payload_json,
+                document_id,
+            ),
+        )
+        connection.commit()
 
 
 def apply_routing(token: str, decision: RoutingDecision, settings: Settings | None = None) -> dict[str, Any]:
@@ -553,7 +748,7 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
         if not task:
             raise KeyError(f"Routing token not found: {token}")
         proposed = RoutingProposal.model_validate_json(task["proposed_payload_json"])
-        corrected = decision.corrected_data or proposed
+        corrected = hydrate_routing_proposal(task["document_id"], decision.corrected_data or proposed, current)
 
         if decision.decision == "approve":
             sync_status = "pending" if corrected.interfast_write_mode != "disabled" else "disabled"
@@ -562,7 +757,7 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
                 UPDATE documents
                 SET document_kind = ?, supply_type = ?, final_filename = ?, routing_confidence = ?,
                     worksite_external_id = ?, client_external_id = ?, interfast_target_type = ?, interfast_target_id = ?,
-                    interfast_sync_status = ?, current_stage = 'routed', updated_at = CURRENT_TIMESTAMP
+                    project_ref = ?, interfast_sync_status = ?, current_stage = 'routed', updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (
@@ -574,6 +769,7 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
                     corrected.client_external_id,
                     corrected.interfast_target_type,
                     corrected.interfast_target_id,
+                    corrected.target_label,
                     sync_status,
                     task["document_id"],
                 ),
@@ -591,10 +787,10 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
             connection.execute(
                 """
                 UPDATE documents
-                SET current_stage = 'needs_routing_fix', updated_at = CURRENT_TIMESTAMP
+                SET project_ref = ?, current_stage = 'needs_routing_fix', updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (task["document_id"],),
+                (corrected.target_label, task["document_id"]),
             )
 
         connection.execute(
@@ -673,19 +869,32 @@ def dispatch_document(document_id: int, settings: Settings | None = None) -> dic
     if not archived_path.exists():
         raise FileNotFoundError(f"Archived file not found: {archived_path}")
 
-    proposal = RoutingProposal(
-        document_kind=document.get("document_kind") or "unknown",
-        supply_type=document.get("supply_type") or "unknown",
-        final_filename=document.get("final_filename") or archived_path.name,
-        routing_confidence=float(document.get("routing_confidence") or 0),
-        client_external_id=document.get("client_external_id"),
-        worksite_external_id=document.get("worksite_external_id"),
-        interfast_target_type=document.get("interfast_target_type"),
-        interfast_target_id=document.get("interfast_target_id"),
-        interfast_write_mode=current.interfast_write_mode,
-        target_label=document.get("project_ref") or document.get("worksite_external_id"),
-    )
-    proposal.standard_path, proposal.accounting_path, proposal.worksite_path = _build_storage_paths(current, proposal)
+    with get_connection(current) as connection:
+        routing_row = connection.execute(
+            """
+            SELECT corrected_payload_json, proposed_payload_json
+            FROM routing_tasks
+            WHERE document_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (document_id,),
+        ).fetchone()
+    if routing_row and (routing_row["corrected_payload_json"] or routing_row["proposed_payload_json"]):
+        proposal = RoutingProposal.model_validate_json(routing_row["corrected_payload_json"] or routing_row["proposed_payload_json"])
+    else:
+        proposal = RoutingProposal(
+            document_kind=document.get("document_kind") or "unknown",
+            supply_type=document.get("supply_type") or "unknown",
+            routing_confidence=float(document.get("routing_confidence") or 0),
+            client_external_id=document.get("client_external_id"),
+            worksite_external_id=document.get("worksite_external_id"),
+            interfast_target_type=document.get("interfast_target_type"),
+            interfast_target_id=document.get("interfast_target_id"),
+            interfast_write_mode=current.interfast_write_mode,
+            target_label=document.get("project_ref") or document.get("worksite_external_id"),
+        )
+    proposal = hydrate_routing_proposal(document_id, proposal, current, context=context)
 
     local_results = {
         "standard": _copy_if_needed(archived_path, Path(proposal.standard_path)),
@@ -719,6 +928,7 @@ def dispatch_document(document_id: int, settings: Settings | None = None) -> dic
             "interfast_target_type": proposal.interfast_target_type,
             "interfast_target_id": proposal.interfast_target_id,
             "worksite_external_id": proposal.worksite_external_id,
+            "expense_label": proposal.expense_label,
         },
         archived_path,
     )

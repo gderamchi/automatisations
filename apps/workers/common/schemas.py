@@ -46,6 +46,7 @@ class ValidationDecision(BaseModel):
 class RoutingProposal(BaseModel):
     document_kind: str = "unknown"
     supply_type: str = "unknown"
+    expense_label: str | None = None
     final_filename: str | None = None
     routing_confidence: float = 0.0
     client_external_id: str | None = None

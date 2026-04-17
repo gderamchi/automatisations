@@ -33,6 +33,7 @@
 
         <article class="panel form-panel">
           {% set payload = task.corrected_payload or task.proposed_payload %}
+          {% set document = task.document_payload %}
 
           <div class="summary-card">
             <div class="summary-row">
@@ -48,8 +49,8 @@
               <span class="summary-value">{{ payload.target_label or "non identifié" }}</span>
             </div>
             <div class="summary-row">
-              <span class="summary-label">Confiance</span>
-              <span class="summary-value">{{ "%.0f"|format((payload.routing_confidence or 0) * 100) }}%</span>
+              <span class="summary-label">Montant TTC</span>
+              <span class="summary-value">{{ document.gross_amount or "-" }} {{ document.currency or "EUR" }}</span>
             </div>
           </div>
 
@@ -86,11 +87,47 @@
               </label>
               <label>
                 Chantier
-                <input type="text" name="target_label" value="{{ payload.target_label or '' }}">
+                <select name="worksite_external_id" id="worksite_external_id">
+                  <option value="">Aucun chantier</option>
+                  {% for option in task.worksite_options %}
+                  <option
+                    value="{{ option.external_project_id }}"
+                    data-client-id="{{ option.client_external_id or '' }}"
+                    data-target-label="{{ option.project_name or '' }}"
+                    {{ "selected" if payload.worksite_external_id == option.external_project_id else "" }}
+                  >
+                    {{ option.label }}
+                  </option>
+                  {% endfor %}
+                </select>
               </label>
               <label>
-                Nom final
-                <input type="text" name="final_filename" value="{{ payload.final_filename or '' }}">
+                Nom dépense
+                <input type="text" name="expense_label" value="{{ payload.expense_label or '' }}">
+              </label>
+              <label>
+                Fournisseur
+                <input type="text" name="supplier_name" value="{{ document.supplier_name or '' }}">
+              </label>
+              <label>
+                N° facture
+                <input type="text" name="invoice_number" value="{{ document.invoice_number or '' }}">
+              </label>
+              <label>
+                Date facture
+                <input type="date" name="invoice_date" value="{{ document.invoice_date or '' }}">
+              </label>
+              <label>
+                Montant HT
+                <input type="number" step="0.01" name="net_amount" value="{{ document.net_amount or '' }}">
+              </label>
+              <label>
+                TVA
+                <input type="number" step="0.01" name="vat_amount" value="{{ document.vat_amount or '' }}">
+              </label>
+              <label>
+                Montant TTC
+                <input type="number" step="0.01" name="gross_amount" value="{{ document.gross_amount or '' }}">
               </label>
             </div>
 
@@ -102,37 +139,47 @@
                   <input type="number" step="0.01" name="routing_confidence" value="{{ payload.routing_confidence or 0 }}">
                 </label>
                 <label>
+                  Devise
+                  <input type="text" name="currency" value="{{ document.currency or 'EUR' }}">
+                </label>
+                <label>
+                  Nom fichier technique
+                  <input type="text" name="final_filename" value="{{ payload.final_filename or '' }}" readonly>
+                </label>
+                <label>
                   Client InterFast
-                  <input type="text" name="client_external_id" value="{{ payload.client_external_id or '' }}">
+                  <input type="text" name="client_external_id" id="client_external_id" value="{{ payload.client_external_id or '' }}" readonly>
                 </label>
                 <label>
                   Chantier InterFast
-                  <input type="text" name="worksite_external_id" value="{{ payload.worksite_external_id or '' }}">
+                  <input type="text" value="{{ payload.worksite_external_id or '' }}" readonly>
                 </label>
                 <label>
                   Cible InterFast
-                  <input type="text" name="interfast_target_type" value="{{ payload.interfast_target_type or '' }}">
+                  <input type="text" name="interfast_target_type" value="{{ payload.interfast_target_type or '' }}" readonly>
                 </label>
                 <label>
                   ID cible InterFast
-                  <input type="text" name="interfast_target_id" value="{{ payload.interfast_target_id or '' }}">
+                  <input type="text" name="interfast_target_id" value="{{ payload.interfast_target_id or '' }}" readonly>
                 </label>
                 <label>
                   Dossier standard
-                  <input type="text" name="standard_path" value="{{ payload.standard_path or '' }}">
+                  <input type="text" name="standard_path" value="{{ payload.standard_path or '' }}" readonly>
                 </label>
                 <label>
                   Dossier compta
-                  <input type="text" name="accounting_path" value="{{ payload.accounting_path or '' }}">
+                  <input type="text" name="accounting_path" value="{{ payload.accounting_path or '' }}" readonly>
                 </label>
                 <label>
                   Dossier chantier
-                  <input type="text" name="worksite_path" value="{{ payload.worksite_path or '' }}">
+                  <input type="text" name="worksite_path" value="{{ payload.worksite_path or '' }}" readonly>
                 </label>
               </div>
             </details>
 
             <input type="hidden" name="validator_name" value="">
+            <input type="hidden" name="target_label" id="target_label" value="{{ payload.target_label or '' }}">
+            <input type="hidden" name="due_date" value="{{ document.due_date or '' }}">
 
             <label class="textarea-label">
               Notes
@@ -147,5 +194,23 @@
         </article>
       </section>
     </main>
+    <script>
+      const worksiteSelect = document.getElementById("worksite_external_id");
+      const clientField = document.getElementById("client_external_id");
+      const targetLabelField = document.getElementById("target_label");
+      const syncWorksiteSelection = () => {
+        if (!worksiteSelect) return;
+        const selected = worksiteSelect.options[worksiteSelect.selectedIndex];
+        if (!selected || !selected.value) {
+          if (clientField) clientField.value = "";
+          if (targetLabelField) targetLabelField.value = "";
+          return;
+        }
+        if (clientField) clientField.value = selected.dataset.clientId || "";
+        if (targetLabelField) targetLabelField.value = selected.dataset.targetLabel || selected.textContent.trim();
+      };
+      worksiteSelect?.addEventListener("change", syncWorksiteSelection);
+      syncWorksiteSelection();
+    </script>
   </body>
 </html>

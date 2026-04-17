@@ -25,7 +25,15 @@ from apps.workers.exports.inexweb import export_inexweb
 from apps.workers.exports.weekly_accounting import send_weekly_accounting_email
 from apps.workers.sync.interfast import sync_interfast
 from apps.workers.accounting.entries import generate_entries_for_document
-from apps.workers.routing.service import apply_routing, dispatch_document, ensure_routing_task, get_routing_task, list_pending_routing_tasks
+from apps.workers.routing.service import (
+    apply_routing,
+    dispatch_document,
+    ensure_routing_task,
+    get_routing_task,
+    hydrate_routing_proposal,
+    list_pending_routing_tasks,
+    update_document_payload_from_routing,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -85,6 +93,7 @@ def _build_routing_payload(
     proposed_payload: dict,
     document_kind: str | None,
     supply_type: str | None,
+    expense_label: str | None,
     final_filename: str | None,
     routing_confidence: str | None,
     client_external_id: str | None,
@@ -101,6 +110,7 @@ def _build_routing_payload(
         {
             "document_kind": document_kind or payload.get("document_kind") or "unknown",
             "supply_type": supply_type or payload.get("supply_type") or "unknown",
+            "expense_label": expense_label or payload.get("expense_label"),
             "final_filename": final_filename or payload.get("final_filename"),
             "routing_confidence": float(routing_confidence) if routing_confidence else float(payload.get("routing_confidence") or 0),
             "client_external_id": client_external_id or payload.get("client_external_id"),
@@ -114,6 +124,35 @@ def _build_routing_payload(
         }
     )
     return RoutingProposal.model_validate(payload)
+
+
+def _build_routing_document_payload(
+    document_payload: dict,
+    supplier_name: str | None,
+    invoice_number: str | None,
+    invoice_date: str | None,
+    due_date: str | None,
+    currency: str | None,
+    net_amount: str | None,
+    vat_amount: str | None,
+    gross_amount: str | None,
+    project_ref: str | None,
+) -> OCRNormalized:
+    payload = dict(document_payload)
+    payload.update(
+        {
+            "supplier_name": supplier_name or payload.get("supplier_name"),
+            "invoice_number": invoice_number or payload.get("invoice_number"),
+            "invoice_date": invoice_date or payload.get("invoice_date"),
+            "due_date": due_date or payload.get("due_date"),
+            "currency": currency or payload.get("currency") or "EUR",
+            "net_amount": Decimal(net_amount) if net_amount else payload.get("net_amount"),
+            "vat_amount": Decimal(vat_amount) if vat_amount else payload.get("vat_amount"),
+            "gross_amount": Decimal(gross_amount) if gross_amount else payload.get("gross_amount"),
+            "project_ref": project_ref if project_ref is not None else payload.get("project_ref"),
+        }
+    )
+    return OCRNormalized.model_validate(payload)
 
 
 @app.get("/", include_in_schema=False)
@@ -327,8 +366,17 @@ async def submit_routing(
     notes: str = Form(default=""),
     document_kind: str | None = Form(default=None),
     supply_type: str | None = Form(default=None),
+    expense_label: str | None = Form(default=None),
     final_filename: str | None = Form(default=None),
     routing_confidence: str | None = Form(default=None),
+    supplier_name: str | None = Form(default=None),
+    invoice_number: str | None = Form(default=None),
+    invoice_date: str | None = Form(default=None),
+    due_date: str | None = Form(default=None),
+    currency: str | None = Form(default=None),
+    net_amount: str | None = Form(default=None),
+    vat_amount: str | None = Form(default=None),
+    gross_amount: str | None = Form(default=None),
     client_external_id: str | None = Form(default=None),
     worksite_external_id: str | None = Form(default=None),
     interfast_target_type: str | None = Form(default=None),
@@ -343,12 +391,26 @@ async def submit_routing(
     if not task:
         raise HTTPException(status_code=404, detail="Routing task not found")
     corrected = None
+    corrected_document = None
     dispatch_result = None
     if decision != "reject":
+        corrected_document = _build_routing_document_payload(
+            task["document_payload"],
+            supplier_name,
+            invoice_number,
+            invoice_date,
+            due_date,
+            currency,
+            net_amount,
+            vat_amount,
+            gross_amount,
+            task["document_payload"].get("project_ref"),
+        )
         corrected = _build_routing_payload(
             task["corrected_payload"] or task["proposed_payload"],
             document_kind,
             supply_type,
+            expense_label,
             final_filename,
             routing_confidence,
             client_external_id,
@@ -360,6 +422,31 @@ async def submit_routing(
             accounting_path,
             worksite_path,
         )
+        corrected = hydrate_routing_proposal(
+            task["document_id"],
+            corrected,
+            settings,
+            context={
+                "document": {
+                    "id": task["document_id"],
+                    "invoice_date": corrected_document.invoice_date.isoformat() if corrected_document.invoice_date else None,
+                },
+                "payload": {
+                    **task["document_payload"],
+                    "supplier_name": corrected_document.supplier_name,
+                    "invoice_number": corrected_document.invoice_number,
+                    "invoice_date": corrected_document.invoice_date.isoformat() if corrected_document.invoice_date else None,
+                    "due_date": corrected_document.due_date.isoformat() if corrected_document.due_date else None,
+                    "currency": corrected_document.currency,
+                    "net_amount": str(corrected_document.net_amount) if corrected_document.net_amount is not None else None,
+                    "vat_amount": str(corrected_document.vat_amount) if corrected_document.vat_amount is not None else None,
+                    "gross_amount": str(corrected_document.gross_amount) if corrected_document.gross_amount is not None else None,
+                    "project_ref": corrected.target_label or task["document_payload"].get("project_ref"),
+                },
+                "metadata": {},
+                "hints": {},
+            },
+        )
     result = apply_routing(
         token,
         RoutingDecision(
@@ -370,6 +457,13 @@ async def submit_routing(
         ),
         settings,
     )
+    if corrected_document:
+        project_ref = corrected.target_label if corrected else task["document_payload"].get("project_ref")
+        update_document_payload_from_routing(
+            task["document_id"],
+            corrected_document.model_dump(mode="json") | {"project_ref": project_ref},
+            settings,
+        )
     if decision == "approve" and settings.routing_auto_dispatch:
         dispatch_result = dispatch_document(task["document_id"], settings=settings)
     task = get_routing_task(token, settings)
