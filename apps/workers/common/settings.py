@@ -73,6 +73,11 @@ class Settings(BaseSettings):
             "tva",
         ]
     )
+    optional_excel_mappings: list[str] = Field(
+        default_factory=lambda: [
+            "client_grand_livre",
+        ]
+    )
     weekly_accounting_recipient: str | None = None
     weekly_accounting_subject_prefix: str = "COMPTABILITÉ"
     doe_expected_documents: list[str] = Field(

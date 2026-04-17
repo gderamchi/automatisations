@@ -99,6 +99,7 @@ def test_internal_ingest_and_validation_flow(client, tmp_path, test_settings, in
     )
     assert routing_submit.status_code == 200
     assert "Dispatch: dispatched" in routing_submit.text
+    assert "Excel: 1 erreur(s) non bloquante(s)" in routing_submit.text
     assert (test_settings.classified_standard_dir / "2026-03-10_INVOICE_FOURNISSEUR_TEST_MATERIEL_PROJET_X_1200.00.pdf").exists()
     with get_connection(test_settings) as connection:
         updated = connection.execute(

@@ -911,15 +911,18 @@ def dispatch_document(document_id: int, settings: Settings | None = None) -> dic
             settings=current,
         )
 
-    excel_result = write_document_bundle(document_id, settings=current)
-    _record_dispatch_attempt(
-        document_id,
-        "excel",
-        request_payload={"mappings": list(current.default_excel_mappings)},
-        status="success",
-        response_payload=excel_result,
-        settings=current,
-    )
+    excel_result = write_document_bundle(document_id, settings=current, strict=False)
+    for mapping_result in excel_result["mappings"]:
+        _record_dispatch_attempt(
+            document_id,
+            f"excel-{mapping_result['mapping']}",
+            request_payload={"mapping": mapping_result["mapping"]},
+            status="success" if mapping_result.get("status") == "success" else "error",
+            response_payload=mapping_result,
+            retryable=False,
+            error_text=mapping_result.get("error"),
+            settings=current,
+        )
 
     adapter = build_interfast_adapter(current)
     interfast_result = adapter.dispatch(

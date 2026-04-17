@@ -1,0 +1,25 @@
+{
+  "required_env": ["CLIENT_GRAND_LIVRE_WORKBOOK_PATH"],
+  "workbook_path": "${CLIENT_GRAND_LIVRE_WORKBOOK_PATH}",
+  "table_name": "Tresorerie",
+  "template_row": 17,
+  "columns": {
+    "invoice_date": "Date",
+    "excel_invoice_label": "N° Facture",
+    "final_filename": "ID Document",
+    "due_date": "Échéance",
+    "payment_date": "Date paiement",
+    "excel_description": "Description",
+    "excel_operation_type": "Type d'opération",
+    "supplier_name": "Fournisseur",
+    "payment_method": "Mode paiement",
+    "excel_label": "Libellé",
+    "excel_sub_label": "Sous-Libellé",
+    "excel_project_code": "N° Chantier",
+    "net_amount": "HT",
+    "excel_vat_rate": "% TVA",
+    "excel_status_label": "Statut",
+    "excel_received_transfer": "Virement Reçu",
+    "supplier_siret": "Fournisseur Code"
+  }
+}

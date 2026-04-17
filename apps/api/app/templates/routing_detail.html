@@ -18,6 +18,9 @@
           {% endif %}
           {% if dispatch_result %}
           <p class="banner">Dispatch: {{ dispatch_result.stage }}</p>
+          {% if dispatch_result.excel.errors %}
+          <p class="banner">Excel: {{ dispatch_result.excel.errors|length }} erreur(s) non bloquante(s)</p>
+          {% endif %}
           {% endif %}
         </div>
         <a class="button secondary" onclick="history.back()">Retour</a>

@@ -25,6 +25,7 @@
 5. Dispatch
    - Copies NAS: standard, compta, chantier.
    - Excel: `write_document_bundle`.
+   - Le mapping client `client_grand_livre` s'active si `CLIENT_GRAND_LIVRE_WORKBOOK_PATH` est fourni; un echec Excel est journalise mais ne bloque pas le dispatch Interface / InterFast.
    - InterFast: adapter `disabled|attachment|expense`.
 6. Lots complementaires
    - Interfast sync -> cache SQLite -> DOE.
