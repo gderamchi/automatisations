@@ -42,3 +42,40 @@ docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker
 - Passer `OCR_MOCK_MODE=false`.
 - Exposer l'UI derriere VPN ou reverse proxy NAS.
 - Sauvegarder regulierement `state/sqlite` et `archive`.
+
+## Mode auto-update (recommande)
+
+Objectif: ne plus toucher le NAS pour chaque release.
+
+### Principe
+
+1. A chaque push sur `main`, GitHub Actions publie une image Docker dans GHCR.
+2. Le NAS execute [infra/compose/docker-compose.nas.yml](infra/compose/docker-compose.nas.yml).
+3. `watchtower` detecte les nouvelles images et redemarre automatiquement les services applicatifs.
+
+Scope actuel auto-update:
+
+- `api` et `mail-worker` sont auto-updates via image GHCR.
+- Les workflows n8n sont montes depuis le NAS (`n8n/workflows`) et ne sont pas auto-synchronises par image.
+
+### Initialisation one-time sur NAS
+
+```bash
+docker compose -f infra/compose/docker-compose.nas.yml --profile init run --rm worker-init
+docker compose -f infra/compose/docker-compose.nas.yml up -d api mail-worker n8n watchtower
+```
+
+### Prerequis GHCR
+
+- Si le package GHCR est public: aucun login supplementaire requis.
+- Si le package GHCR est prive: configurer un login registre GHCR sur le NAS (PAT avec `read:packages`).
+- Le workflow publie une image multi-architecture (`linux/amd64`, `linux/arm64`) pour compatibilite Synology.
+
+### Rollback
+
+1. Modifier `.env` sur le NAS et fixer `AUTOMATISATIONS_IMAGE` sur un tag SHA connu (`ghcr.io/gderamchi/automatisations:sha-...`).
+2. Relancer:
+
+```bash
+docker compose -f infra/compose/docker-compose.nas.yml up -d api mail-worker
+```

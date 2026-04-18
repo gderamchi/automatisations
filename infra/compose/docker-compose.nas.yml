@@ -1,0 +1,92 @@
+services:
+  api:
+    image: ${AUTOMATISATIONS_IMAGE:-ghcr.io/gderamchi/automatisations:main}
+    pull_policy: always
+    env_file:
+      - ../../.env
+    environment:
+      DATA_ROOT: /data
+      DB_PATH: /data/state/sqlite/automation.db
+    command: uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - automation_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    restart: unless-stopped
+
+  worker-init:
+    image: ${AUTOMATISATIONS_IMAGE:-ghcr.io/gderamchi/automatisations:main}
+    pull_policy: always
+    env_file:
+      - ../../.env
+    environment:
+      DATA_ROOT: /data
+      DB_PATH: /data/state/sqlite/automation.db
+    command: python -m apps.workers.cli init-db
+    volumes:
+      - automation_data:/data
+    restart: "no"
+    profiles: ["init"]
+
+  mail-worker:
+    image: ${AUTOMATISATIONS_IMAGE:-ghcr.io/gderamchi/automatisations:main}
+    pull_policy: always
+    env_file:
+      - ../../.env
+    environment:
+      DATA_ROOT: /data
+      DB_PATH: /data/state/sqlite/automation.db
+    command: python -m apps.workers.cli mail-worker
+    volumes:
+      - automation_data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:1.98.2
+    env_file:
+      - ../../.env
+    environment:
+      N8N_PORT: 5678
+      N8N_HOST: 0.0.0.0
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+      N8N_BINARY_DATA_STORAGE_PATH: /data/binary
+      N8N_SECURE_COOKIE: "false"
+    ports:
+      - "127.0.0.1:5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - automation_data:/data
+      - ../../n8n/workflows:/workflows:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5678/healthz || curl -fsS http://localhost:5678 >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    command: --interval 120 --cleanup --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  automation_data:
+  n8n_data:

@@ -44,6 +44,30 @@ docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker
 En mode NAS, le service `mail-worker` tourne en continu et remplace l'execution locale via `start-local.sh`.
 Les liens envoyes par email (`/review`, `/validate`, `/route`) sont construits a partir de `PUBLIC_BASE_URL`.
 
+## Deploiement NAS avec mise a jour auto
+
+Le fichier [infra/compose/docker-compose.nas.yml](infra/compose/docker-compose.nas.yml) utilise une image Docker publiee par GitHub Actions.
+
+Flux cible:
+
+1. Push sur `main`.
+2. Workflow [docker-publish.yml](.github/workflows/docker-publish.yml) publie `ghcr.io/gderamchi/automatisations:main`.
+3. `watchtower` (sur NAS) detecte la nouvelle image et redemarre `api` et `mail-worker` automatiquement.
+
+One-time setup sur NAS:
+
+```bash
+docker compose -f infra/compose/docker-compose.nas.yml --profile init run --rm worker-init
+docker compose -f infra/compose/docker-compose.nas.yml up -d api mail-worker n8n watchtower
+```
+
+Une fois ce setup fait, les updates de `api` et `mail-worker` se font via `git push` uniquement.
+
+Notes:
+
+- Les workflows n8n restent montes depuis le NAS (`n8n/workflows`) et doivent etre importes/geres cote n8n.
+- Rollback rapide: fixer `AUTOMATISATIONS_IMAGE` dans `.env` sur un tag SHA publie par GHCR, puis relancer `docker compose ... up -d`.
+
 ## CLI workers
 
 ```bash

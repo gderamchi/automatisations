@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.venv313
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+
+data
+tmp
+automatisations_platform.egg-info
+
+.DS_Store
