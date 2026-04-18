@@ -22,8 +22,9 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  worker:
+  worker-init:
     build:
       context: ../..
       dockerfile: infra/compose/Dockerfile
@@ -38,6 +39,26 @@ services:
       - ../../scripts:/app/scripts:ro
       - automation_data:/data
     restart: "no"
+    profiles: ["init"]
+
+  mail-worker:
+    build:
+      context: ../..
+      dockerfile: infra/compose/Dockerfile
+    env_file:
+      - ../../.env
+    environment:
+      DATA_ROOT: /data
+      DB_PATH: /data/state/sqlite/automation.db
+    command: python -m apps.workers.cli mail-worker
+    volumes:
+      - ../../config:/app/config:ro
+      - ../../scripts:/app/scripts:ro
+      - automation_data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
   n8n:
     image: n8nio/n8n:1.98.2
@@ -59,6 +80,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5678/healthz || curl -fsS http://localhost:5678 >/dev/null"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
 
   caddy:
     image: caddy:2.10.0

@@ -4,6 +4,7 @@
 2. Verifier la presence des classeurs Excel et mappings.
 3. Basculer `OCR_MOCK_MODE=false`.
 4. Lancer `docker compose ... up -d --build`.
+   - Verifier que les services `api`, `mail-worker` et `n8n` sont bien en execution continue.
 5. Importer les workflows n8n.
 6. Envoyer un email de test avec pièce jointe et hints éventuels (`chantier: ...`, `fourniture: ...`).
 7. Verifier:
@@ -11,6 +12,7 @@
    - `ocr_extractions` alimente
    - tache de validation OCR creee ou auto-validation
    - tache de routage creee
+   - liens de reponse email (`/review`, `/validate`, `/route`) resolus sur le domaine public et jamais sur localhost
    - copies NAS presentes
    - ecritures Excel fonctionnelles
    - tentative InterFast tracee dans `dispatch_attempts`

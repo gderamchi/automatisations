@@ -25,7 +25,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "http://api:8080/internal/documents/ingest",
+        "url": "={{$env.INTERNAL_API_BASE_URL || 'http://api:8080'}}/internal/documents/ingest",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -51,7 +51,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "=http://api:8080/internal/documents/{{$json.document_id}}/ocr",
+        "url": "={{$env.INTERNAL_API_BASE_URL || 'http://api:8080'}}/internal/documents/{{$json.document_id}}/ocr",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

@@ -3,7 +3,7 @@ from __future__ import annotations
 from email.message import EmailMessage
 
 from apps.workers.common.database import get_connection
-from apps.workers.mail.worker import MailAutomationWorker
+from apps.workers.mail.worker import MailAutomationWorker, ParsedMail
 
 
 class FakeImapClient:
@@ -163,3 +163,104 @@ def test_mail_worker_ignores_generated_reply_and_reports_unsupported_attachment(
     assert summary["routing_tasks_created"] == 0
     assert len(sent_messages) == 1
     assert sent_messages[0][0][1] == "owner@example.com"
+
+
+def _extract_text_body(message) -> str:
+    for part in message.walk():
+        if part.get_content_type() == "text/plain":
+            return part.get_payload(decode=True).decode("utf-8")
+    raise AssertionError("No text/plain body found in email")
+
+
+def _sample_mail() -> ParsedMail:
+    return ParsedMail(
+        uid="999",
+        message_id="<mail-999@example.com>",
+        subject="Facture test",
+        sender_email="supplier@example.com",
+        recipient_email="inbox@example.com",
+        body_text="Bonjour",
+        attachments=[],
+        generated_reply=False,
+    )
+
+
+def test_mail_worker_reply_links_use_public_base_url_for_validation(test_settings):
+    settings = test_settings.model_copy(update={"public_base_url": "https://ocr.example.com/"})
+    sent_messages = []
+    worker = MailAutomationWorker(
+        settings=settings,
+        imap_factory=lambda: FakeImapClient({}),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
+    )
+
+    worker._send_reply(
+        _sample_mail(),
+        [
+            {
+                "status": "ok",
+                "attachment": "invoice-a.txt",
+                "fields": {
+                    "supplier_name": "ACME BTP SAS",
+                    "invoice_number": "FAC-2026-001",
+                    "gross_amount": "1200.00",
+                    "project_ref": "Residence Soleil",
+                },
+                "validation_required": True,
+                "validation_token": "val-token-123",
+                "routing_token": None,
+                "auto_approved": False,
+                "duplicate": False,
+            }
+        ],
+        batch_token="batch-token-123",
+    )
+
+    assert len(sent_messages) == 1
+    message, recipient = sent_messages[0][0]
+    body = _extract_text_body(message)
+
+    assert recipient == "owner@example.com"
+    assert "https://ocr.example.com/review/batch-token-123" in body
+    assert "https://ocr.example.com/validate/val-token-123" in body
+    assert "localhost" not in body
+    assert "127.0.0.1" not in body
+
+
+def test_mail_worker_reply_links_use_public_base_url_for_routing(test_settings):
+    settings = test_settings.model_copy(update={"public_base_url": "https://ocr.example.com"})
+    sent_messages = []
+    worker = MailAutomationWorker(
+        settings=settings,
+        imap_factory=lambda: FakeImapClient({}),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
+    )
+
+    worker._send_reply(
+        _sample_mail(),
+        [
+            {
+                "status": "ok",
+                "attachment": "invoice-b.txt",
+                "fields": {
+                    "supplier_name": "ACME BTP SAS",
+                    "invoice_number": "FAC-2026-001",
+                    "gross_amount": "1200.00",
+                },
+                "validation_required": False,
+                "validation_token": None,
+                "routing_token": "route-token-456",
+                "auto_approved": False,
+                "duplicate": False,
+            }
+        ],
+        batch_token="batch-token-456",
+    )
+
+    assert len(sent_messages) == 1
+    message, _recipient = sent_messages[0][0]
+    body = _extract_text_body(message)
+
+    assert "https://ocr.example.com/review/batch-token-456" in body
+    assert "https://ocr.example.com/route/route-token-456" in body
+

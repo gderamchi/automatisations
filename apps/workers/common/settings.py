@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,7 +64,7 @@ class Settings(BaseSettings):
     app_timezone: str = "Europe/Paris"
     request_timeout_seconds: int = 30
     app_name: str = "automatisations-platform"
-    public_base_url: str = "http://localhost:9000"
+    public_base_url: str | None = None
     default_excel_mapping: str = "purchases"
     default_excel_mappings: list[str] = Field(
         default_factory=lambda: [
@@ -183,6 +184,31 @@ class Settings(BaseSettings):
             self.classified_accounting_dir,
             self.classified_worksites_dir,
         ]
+
+    @model_validator(mode="after")
+    def validate_public_base_url(self) -> "Settings":
+        environment = self.environment.lower().strip()
+        configured_url = (self.public_base_url or "").strip()
+        if not configured_url:
+            if environment == "development":
+                configured_url = f"http://127.0.0.1:{self.api_port}"
+            else:
+                raise ValueError("PUBLIC_BASE_URL is required outside development")
+
+        parsed = urlparse(configured_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("PUBLIC_BASE_URL must be an absolute http(s) URL")
+
+        if environment != "development" and parsed.scheme != "https":
+            raise ValueError("PUBLIC_BASE_URL must use https outside development")
+
+        host = (parsed.hostname or "").lower()
+        if environment != "development" and host in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("PUBLIC_BASE_URL cannot point to localhost outside development")
+
+        normalized = configured_url.rstrip("/")
+        object.__setattr__(self, "public_base_url", normalized)
+        return self
 
 
 @lru_cache(maxsize=1)

@@ -2,7 +2,7 @@
     encode gzip
 
     @api {
-        path /internal/* /healthz /docs /openapi.json /validate/* /dashboard /files/*
+        path /internal/* /healthz /docs /openapi.json /validate/* /review/* /route/* /dashboard /files/* /static/*
     }
 
     reverse_proxy @api api:8080

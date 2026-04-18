@@ -42,7 +42,10 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except Exception as exc:
+        raise RuntimeError(f"Invalid application settings: {exc}") from exc
     ensure_runtime_directories(settings)
     init_db(settings)
     yield

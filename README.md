@@ -29,8 +29,20 @@ uvicorn apps.api.app.main:app --reload --host 0.0.0.0 --port 8080
 ## Docker Compose
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml up --build
+cp .env.example .env
+# En production NAS, remplacer par votre domaine public HTTPS
+# PUBLIC_BASE_URL=https://auto.votre-domaine.tld
+# ENVIRONMENT=production
+
+# Initialisation DB one-shot (optionnel, l'API initialise aussi au demarrage)
+docker compose -f infra/compose/docker-compose.yml --profile init run --rm worker-init
+
+# Services continus
+docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker n8n
 ```
+
+En mode NAS, le service `mail-worker` tourne en continu et remplace l'execution locale via `start-local.sh`.
+Les liens envoyes par email (`/review`, `/validate`, `/route`) sont construits a partir de `PUBLIC_BASE_URL`.
 
 ## CLI workers
 

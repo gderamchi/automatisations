@@ -14,6 +14,7 @@ Faire tourner localement un worker Python qui:
 
 ## Variables minimales
 
+- `PUBLIC_BASE_URL=http://127.0.0.1:8080` (local uniquement)
 - `IMAP_HOST=imap.gmail.com`
 - `IMAP_PORT=993`
 - `IMAP_USERNAME=<compte gmail>`
@@ -44,6 +45,7 @@ python -m apps.workers.cli mail-worker
 
 ## Limites du POC
 
+- Ce flux est local uniquement. En mode NAS 24/7, utiliser `docker compose` avec le service `mail-worker`.
 - Le mode `expense` InterFast reste bloqué tant que l'endpoint privé exact n'est pas prouvé.
 - Le mode `attachment` InterFast suppose un objet cible existant et un upload compatible avec l'API publique.
 - Pas de traitement des formats bureautiques non supportés par le worker.
