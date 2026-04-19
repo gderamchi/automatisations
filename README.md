@@ -32,6 +32,8 @@ uvicorn apps.api.app.main:app --reload --host 0.0.0.0 --port 8080
 cp .env.example .env
 # En production NAS, remplacer par votre domaine public HTTPS
 # PUBLIC_BASE_URL=https://auto.votre-domaine.tld
+# Si l'app est publiee sous un sous-chemin NAS, inclure ce prefixe
+# PUBLIC_BASE_URL=https://votre-domaine.tld/automatisations
 # ENVIRONMENT=production
 
 # Initialisation DB one-shot (optionnel, l'API initialise aussi au demarrage)
@@ -43,6 +45,7 @@ docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker
 
 En mode NAS, le service `mail-worker` tourne en continu et remplace l'execution locale via `start-local.sh`.
 Les liens envoyes par email (`/review`, `/validate`, `/route`) sont construits a partir de `PUBLIC_BASE_URL`.
+`PUBLIC_BASE_URL` doit correspondre exactement a l'URL finale cliquee par l'utilisateur, y compris un eventuel sous-chemin expose par le reverse proxy NAS.
 
 ## Deploiement NAS avec mise a jour auto
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Validation facture {{ task.document_id }}</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/styles.css">
   </head>
   <body>
     <main class="page">
@@ -25,7 +25,7 @@
           <div class="panel-head">
             <h2>Aperçu document</h2>
           </div>
-          <iframe class="preview-frame" src="/files/{{ task.document_id }}"></iframe>
+          <iframe class="preview-frame" src="{{ base_path }}/files/{{ task.document_id }}"></iframe>
         </article>
 
         <article class="panel form-panel">

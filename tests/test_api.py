@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from apps.workers.common.database import get_connection
+from apps.workers.common.settings import get_settings
 from apps.workers.doe.service import upsert_project
 
 
@@ -115,3 +116,63 @@ def test_internal_ingest_and_validation_flow(client, tmp_path, test_settings, in
 def test_dashboard_requires_basic_auth(client):
     response = client.get("/dashboard")
     assert response.status_code == 401
+
+
+def test_ui_links_support_public_base_path_prefix(client, monkeypatch, test_settings, incomplete_invoice_text, tmp_path):
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test/automatisations")
+    get_settings.cache_clear()
+
+    invoice = tmp_path / "invoice-prefix.txt"
+    invoice.write_text(incomplete_invoice_text, encoding="utf-8")
+
+    ingest = client.post(
+        "/internal/documents/ingest",
+        headers={"X-Internal-Token": "test-token"},
+        json={"source_path": str(invoice), "source_kind": "manual"},
+    )
+    assert ingest.status_code == 200
+    document_id = ingest.json()["document_id"]
+
+    ocr = client.post(
+        f"/internal/documents/{document_id}/ocr",
+        headers={"X-Internal-Token": "test-token"},
+    )
+    assert ocr.status_code == 200
+    validation_token = ocr.json()["validation_token"]
+
+    root_redirect = client.get("/", follow_redirects=False)
+    assert root_redirect.status_code == 307
+    assert root_redirect.headers["location"] == "/automatisations/dashboard"
+
+    dashboard_page = client.get("/dashboard", auth=("validator", "secret"))
+    assert dashboard_page.status_code == 200
+    assert '/automatisations/static/styles.css' in dashboard_page.text
+    assert f'/automatisations/validate/{validation_token}' in dashboard_page.text
+
+    prefixed_dashboard_page = client.get("/automatisations/dashboard", auth=("validator", "secret"))
+    assert prefixed_dashboard_page.status_code == 200
+    assert '/automatisations/static/styles.css' in prefixed_dashboard_page.text
+    assert f'/automatisations/validate/{validation_token}' in prefixed_dashboard_page.text
+
+    validation_page = client.get(f"/validate/{validation_token}", auth=("validator", "secret"))
+    assert validation_page.status_code == 200
+    assert '/automatisations/static/styles.css' in validation_page.text
+    assert f'/automatisations/files/{document_id}' in validation_page.text
+
+    prefixed_validation_page = client.get(f"/automatisations/validate/{validation_token}", auth=("validator", "secret"))
+    assert prefixed_validation_page.status_code == 200
+    assert '/automatisations/static/styles.css' in prefixed_validation_page.text
+    assert f'/automatisations/files/{document_id}' in prefixed_validation_page.text
+
+
+def test_ui_links_remain_root_when_public_base_url_has_no_path(client, monkeypatch):
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test")
+    get_settings.cache_clear()
+
+    root_redirect = client.get("/", follow_redirects=False)
+    assert root_redirect.status_code == 307
+    assert root_redirect.headers["location"] == "/dashboard"
+
+    dashboard = client.get("/dashboard", auth=("validator", "secret"))
+    assert dashboard.status_code == 200
+    assert '/static/styles.css' in dashboard.text

@@ -3,12 +3,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from apps.api.app.auth import require_internal_token, require_validation_user
 from apps.workers.banking.importer import import_bank_csv
@@ -40,6 +42,52 @@ BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+def _template_base_path(settings: Settings) -> str:
+    parsed = urlparse((settings.public_base_url or "").strip())
+    path = (parsed.path or "").rstrip("/")
+    if not path:
+        return ""
+    return path if path.startswith("/") else f"/{path}"
+
+
+def _strip_public_base_path(path: str, base_path: str) -> str:
+    if not base_path:
+        return path
+    if path == base_path:
+        return "/"
+    if path.startswith(f"{base_path}/"):
+        return path[len(base_path) :] or "/"
+    return path
+
+
+class PublicBasePathMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        settings = get_settings()
+        base_path = _template_base_path(settings)
+        if not base_path:
+            await self.app(scope, receive, send)
+            return
+
+        updated_scope = dict(scope)
+        updated_scope["root_path"] = scope.get("root_path") or base_path
+
+        stripped_path = _strip_public_base_path(scope.get("path", ""), base_path)
+        if stripped_path != scope.get("path", ""):
+            updated_scope["path"] = stripped_path
+            raw_path = scope.get("raw_path")
+            if raw_path:
+                updated_scope["raw_path"] = stripped_path.encode("utf-8")
+
+        await self.app(updated_scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
@@ -52,6 +100,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Automatisations Platform", lifespan=lifespan)
+app.add_middleware(PublicBasePathMiddleware)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -159,8 +208,9 @@ def _build_routing_document_payload(
 
 
 @app.get("/", include_in_schema=False)
-async def root() -> RedirectResponse:
-    return RedirectResponse(url="/dashboard")
+async def root(settings: Settings = Depends(get_settings)) -> RedirectResponse:
+    base_path = _template_base_path(settings)
+    return RedirectResponse(url=f"{base_path}/dashboard" if base_path else "/dashboard")
 
 
 @app.get("/healthz")
@@ -218,6 +268,7 @@ async def dashboard(
             "pending_routing_tasks": list_pending_routing_tasks(settings),
             "recent_documents": recent_documents,
             "refresh_seconds": settings.dashboard_refresh_seconds,
+            "base_path": _template_base_path(settings),
         },
     )
 
@@ -271,7 +322,11 @@ async def review_batch(
     return templates.TemplateResponse(
         request=request,
         name="review_batch.html",
-        context={"documents": documents, "batch_token": batch_token},
+        context={
+            "documents": documents,
+            "batch_token": batch_token,
+            "base_path": _template_base_path(settings),
+        },
     )
 
 
@@ -284,7 +339,11 @@ async def validation_page(
     task = get_validation_task(token, settings)
     if not task:
         raise HTTPException(status_code=404, detail="Validation task not found")
-    return templates.TemplateResponse(request=request, name="validation_detail.html", context={"task": task})
+    return templates.TemplateResponse(
+        request=request,
+        name="validation_detail.html",
+        context={"task": task, "base_path": _template_base_path(settings)},
+    )
 
 
 @app.post("/validate/{token}", response_class=HTMLResponse)
@@ -344,7 +403,11 @@ async def submit_validation(
     return templates.TemplateResponse(
         request=request,
         name="validation_detail.html",
-        context={"task": task, "result": result},
+        context={
+            "task": task,
+            "result": result,
+            "base_path": _template_base_path(settings),
+        },
     )
 
 
@@ -357,7 +420,11 @@ async def routing_page(
     task = get_routing_task(token, settings)
     if not task:
         raise HTTPException(status_code=404, detail="Routing task not found")
-    return templates.TemplateResponse(request=request, name="routing_detail.html", context={"task": task})
+    return templates.TemplateResponse(
+        request=request,
+        name="routing_detail.html",
+        context={"task": task, "base_path": _template_base_path(settings)},
+    )
 
 
 @app.post("/route/{token}", response_class=HTMLResponse)
@@ -473,7 +540,12 @@ async def submit_routing(
     return templates.TemplateResponse(
         request=request,
         name="routing_detail.html",
-        context={"task": task, "result": result, "dispatch_result": dispatch_result},
+        context={
+            "task": task,
+            "result": result,
+            "dispatch_result": dispatch_result,
+            "base_path": _template_base_path(settings),
+        },
     )
 
 

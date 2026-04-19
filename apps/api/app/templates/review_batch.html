@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Documents à vérifier</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/styles.css">
   </head>
   <body>
     <main class="page">
@@ -57,9 +57,9 @@
         </div>
 
         {% if doc.validation_task_status == 'pending' and doc.validation_token %}
-        <a class="button primary-action" href="/validate/{{ doc.validation_token }}">Vérifier ce document</a>
+        <a class="button primary-action" href="{{ base_path }}/validate/{{ doc.validation_token }}">Vérifier ce document</a>
         {% elif doc.routing_task_status == 'pending' and doc.routing_token %}
-        <a class="button primary-action" href="/route/{{ doc.routing_token }}">Confirmer le chantier</a>
+        <a class="button primary-action" href="{{ base_path }}/route/{{ doc.routing_token }}">Confirmer le chantier</a>
         {% endif %}
         {% if doc.interfast_link and doc.current_stage in ('dispatched', 'dispatch_blocked') %}
         <a class="button secondary" href="{{ doc.interfast_link }}" target="_blank">Voir sur InterFast</a>

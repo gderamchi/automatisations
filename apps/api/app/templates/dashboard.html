@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="{{ refresh_seconds }}">
     <title>Dashboard Automatisations</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="{{ base_path }}/static/styles.css">
   </head>
   <body>
     <main class="page">
@@ -70,7 +70,7 @@
               <td>{{ task.supplier_name or "-" }}</td>
               <td>{{ task.invoice_number or "-" }}</td>
               <td>{{ task.confidence }}</td>
-              <td><a class="button" href="/validate/{{ task.token }}">Ouvrir</a></td>
+              <td><a class="button" href="{{ base_path }}/validate/{{ task.token }}">Ouvrir</a></td>
             </tr>
             {% endfor %}
           </tbody>
@@ -104,7 +104,7 @@
               <td>{{ task.supply_type or "-" }}</td>
               <td>{{ task.project_ref or "-" }}</td>
               <td>{{ task.routing_confidence }}</td>
-              <td><a class="button" href="/route/{{ task.token }}">Ouvrir</a></td>
+              <td><a class="button" href="{{ base_path }}/route/{{ task.token }}">Ouvrir</a></td>
             </tr>
             {% endfor %}
           </tbody>
