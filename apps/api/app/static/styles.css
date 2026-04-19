@@ -82,6 +82,7 @@ h1, h2 {
   border: 1px solid var(--line);
   border-radius: 24px;
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 
 .metric-card {
@@ -178,6 +179,7 @@ h1, h2 {
 
 .field-span {
   grid-column: 1 / -1;
+  min-width: 0;
 }
 
 label,
@@ -198,6 +200,8 @@ select {
   font: inherit;
   color: var(--ink);
   background: white;
+  width: 100%;
+  min-width: 0;
 }
 
 .textarea-label {
@@ -344,6 +348,7 @@ select {
   border-radius: 18px;
   padding: 16px;
   background: rgba(14, 122, 87, 0.04);
+  min-width: 0;
 }
 
 .excel-target-error {
@@ -367,6 +372,8 @@ select {
   font-size: 0.9rem;
   color: var(--muted);
   overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
 }
 
 .excel-kv-list {
@@ -405,6 +412,10 @@ select {
 
   .validation-layout {
     grid-template-columns: 1fr;
+  }
+
+  .validation-layout > * {
+    min-width: 0;
   }
 
   .form-grid {
