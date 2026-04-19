@@ -64,6 +64,11 @@ h1, h2 {
   background: rgba(14, 122, 87, 0.12);
 }
 
+.banner-error {
+  background: rgba(171, 63, 47, 0.14);
+  color: var(--danger);
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -171,6 +176,10 @@ h1, h2 {
   gap: 14px;
 }
 
+.field-span {
+  grid-column: 1 / -1;
+}
+
 label,
 .textarea-label {
   display: flex;
@@ -181,7 +190,8 @@ label,
 }
 
 input,
-textarea {
+textarea,
+select {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 12px 14px;
@@ -211,6 +221,10 @@ textarea {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.error-surface {
+  background: rgba(171, 63, 47, 0.08);
 }
 
 .summary-card {
@@ -287,12 +301,6 @@ textarea {
 }
 
 select {
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 12px 14px;
-  font: inherit;
-  color: var(--ink);
-  background: white;
   appearance: none;
 }
 
@@ -325,11 +333,78 @@ select {
   margin-top: 4px;
 }
 
+.excel-preview-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.excel-target {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(14, 122, 87, 0.04);
+}
+
+.excel-target-error {
+  background: rgba(171, 63, 47, 0.06);
+}
+
+.excel-target-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.excel-target-head h3 {
+  margin: 0;
+  font-family: "Space Grotesk", "Avenir Next", sans-serif;
+}
+
+.excel-target-path {
+  margin: 10px 0 14px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.excel-kv-list {
+  display: grid;
+  gap: 8px;
+}
+
+.excel-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(31, 42, 36, 0.08);
+}
+
+.action-row-sticky {
+  position: sticky;
+  bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(31, 42, 36, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 250, 244, 0.96);
+  backdrop-filter: blur(8px);
+}
+
 @media (max-width: 960px) {
-  .hero,
+  .page {
+    padding: 20px 14px 32px;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
   .validation-layout {
     grid-template-columns: 1fr;
-    display: grid;
   }
 
   .form-grid {
@@ -337,6 +412,50 @@ select {
   }
 
   .preview-frame {
-    min-height: 420px;
+    min-height: 56vh;
+  }
+
+  .panel {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .summary-row,
+  .excel-kv-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .action-row {
+    flex-direction: column;
+  }
+
+  .button,
+  .button.primary-action {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(14, 122, 87, 0.12), transparent 38%),
+      linear-gradient(180deg, #f7f0e6, #efe8dc 100%);
+  }
+
+  .hero {
+    margin-bottom: 18px;
+  }
+
+  .lead {
+    font-size: 0.95rem;
+  }
+
+  .preview-panel {
+    order: 2;
+  }
+
+  .form-panel {
+    order: 1;
   }
 }

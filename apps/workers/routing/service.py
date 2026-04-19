@@ -14,7 +14,7 @@ from apps.workers.common.database import get_connection, init_db
 from apps.workers.common.hashing import compute_sha256, slugify
 from apps.workers.common.schemas import RoutingDecision, RoutingProposal
 from apps.workers.common.settings import Settings, get_settings
-from apps.workers.documents.excel import write_document_bundle
+from apps.workers.documents.excel import build_excel_review_payload, get_excel_form_options, has_nas_excel_targets, write_document_bundle
 from apps.workers.notifications.service import queue_notification, send_telegram_message_if_configured
 from apps.workers.routing.interfast_writer import build_interfast_adapter
 
@@ -480,6 +480,8 @@ def _notify_telegram(document_id: int, body: str, settings: Settings) -> None:
 
 def _can_auto_approve(proposal: RoutingProposal, settings: Settings) -> bool:
     return (
+        not has_nas_excel_targets(settings)
+        and
         proposal.routing_confidence >= settings.routing_auto_approve_threshold
         and bool(proposal.worksite_external_id)
         and not proposal.ambiguous_match
@@ -669,6 +671,7 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
         if row["corrected_payload_json"]
         else None
     )
+    current_payload = corrected.model_dump(mode="json") if corrected else proposed.model_dump(mode="json")
     return {
         "task_id": row["task_id"],
         "token": row["token"],
@@ -685,6 +688,13 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
         "final_filename": row["final_filename"],
         "document_payload": document_payload,
         "worksite_options": list_worksite_options(current),
+        "excel_form_options": get_excel_form_options(),
+        "excel_review": build_excel_review_payload(
+            row["document_id"],
+            settings=current,
+            document_payload_override=document_payload,
+            routing_payload_override=current_payload,
+        ),
         "proposed_payload": proposed.model_dump(mode="json"),
         "corrected_payload": corrected.model_dump(mode="json") if corrected else None,
     }
@@ -815,6 +825,48 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
     }
 
 
+def revert_routing_to_pending(
+    token: str,
+    corrected_payload: RoutingProposal | None,
+    error_text: str,
+    settings: Settings | None = None,
+) -> None:
+    current = settings or get_settings()
+    init_db(current)
+    with get_connection(current) as connection:
+        task = connection.execute(
+            """
+            SELECT id, document_id
+            FROM routing_tasks
+            WHERE token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not task:
+            raise KeyError(f"Routing token not found: {token}")
+        connection.execute(
+            """
+            UPDATE routing_tasks
+            SET status = 'pending', corrected_payload_json = ?, routing_notes = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                corrected_payload.model_dump_json() if corrected_payload else None,
+                error_text,
+                task["id"],
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE documents
+            SET current_stage = 'needs_routing_fix', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (task["document_id"],),
+        )
+        connection.commit()
+
+
 def _record_dispatch_attempt(
     document_id: int,
     target_system: str,
@@ -856,7 +908,7 @@ def _copy_if_needed(source_path: Path, target_path: Path) -> dict[str, Any]:
     return {"path": str(target_path), "copied": True}
 
 
-def dispatch_document(document_id: int, settings: Settings | None = None) -> dict[str, Any]:
+def dispatch_document(document_id: int, settings: Settings | None = None, *, strict_excel: bool = False) -> dict[str, Any]:
     current = settings or get_settings()
     init_db(current)
     context = _load_document_context(document_id, current)
@@ -896,6 +948,23 @@ def dispatch_document(document_id: int, settings: Settings | None = None) -> dic
         )
     proposal = hydrate_routing_proposal(document_id, proposal, current, context=context)
 
+    excel_result = write_document_bundle(
+        document_id,
+        settings=current,
+        strict=strict_excel and has_nas_excel_targets(current),
+    )
+    for mapping_result in excel_result["mappings"]:
+        _record_dispatch_attempt(
+            document_id,
+            f"excel-{mapping_result['mapping']}",
+            request_payload={"mapping": mapping_result["mapping"]},
+            status="success" if mapping_result.get("status") == "success" else "error",
+            response_payload=mapping_result,
+            retryable=False,
+            error_text=mapping_result.get("error"),
+            settings=current,
+        )
+
     local_results = {
         "standard": _copy_if_needed(archived_path, Path(proposal.standard_path)),
         "accounting": _copy_if_needed(archived_path, Path(proposal.accounting_path)),
@@ -908,19 +977,6 @@ def dispatch_document(document_id: int, settings: Settings | None = None) -> dic
             request_payload={"source": str(archived_path), "target": result["path"]},
             status="success",
             response_payload=result,
-            settings=current,
-        )
-
-    excel_result = write_document_bundle(document_id, settings=current, strict=False)
-    for mapping_result in excel_result["mappings"]:
-        _record_dispatch_attempt(
-            document_id,
-            f"excel-{mapping_result['mapping']}",
-            request_payload={"mapping": mapping_result["mapping"]},
-            status="success" if mapping_result.get("status") == "success" else "error",
-            response_payload=mapping_result,
-            retryable=False,
-            error_text=mapping_result.get("error"),
             settings=current,
         )
 

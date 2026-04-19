@@ -10,7 +10,6 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
-from starlette.types import ASGIApp, Receive, Scope, Send
 
 from apps.api.app.auth import require_internal_token, require_validation_user
 from apps.workers.banking.importer import import_bank_csv
@@ -34,58 +33,13 @@ from apps.workers.routing.service import (
     get_routing_task,
     hydrate_routing_proposal,
     list_pending_routing_tasks,
+    revert_routing_to_pending,
     update_document_payload_from_routing,
 )
 
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
-
-def _template_base_path(settings: Settings) -> str:
-    parsed = urlparse((settings.public_base_url or "").strip())
-    path = (parsed.path or "").rstrip("/")
-    if not path:
-        return ""
-    return path if path.startswith("/") else f"/{path}"
-
-
-def _strip_public_base_path(path: str, base_path: str) -> str:
-    if not base_path:
-        return path
-    if path == base_path:
-        return "/"
-    if path.startswith(f"{base_path}/"):
-        return path[len(base_path) :] or "/"
-    return path
-
-
-class PublicBasePathMiddleware:
-    def __init__(self, app: ASGIApp) -> None:
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        settings = get_settings()
-        base_path = _template_base_path(settings)
-        if not base_path:
-            await self.app(scope, receive, send)
-            return
-
-        updated_scope = dict(scope)
-        updated_scope["root_path"] = scope.get("root_path") or base_path
-
-        stripped_path = _strip_public_base_path(scope.get("path", ""), base_path)
-        if stripped_path != scope.get("path", ""):
-            updated_scope["path"] = stripped_path
-            raw_path = scope.get("raw_path")
-            if raw_path:
-                updated_scope["raw_path"] = stripped_path.encode("utf-8")
-
-        await self.app(updated_scope, receive, send)
 
 
 @asynccontextmanager
@@ -100,8 +54,15 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Automatisations Platform", lifespan=lifespan)
-app.add_middleware(PublicBasePathMiddleware)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+def _template_base_path(settings: Settings) -> str:
+    parsed = urlparse((settings.public_base_url or "").strip())
+    path = (parsed.path or "").rstrip("/")
+    if not path:
+        return ""
+    return path if path.startswith("/") else f"/{path}"
 
 
 def _build_corrected_payload(
@@ -156,6 +117,17 @@ def _build_routing_payload(
     standard_path: str | None,
     accounting_path: str | None,
     worksite_path: str | None,
+    operation_type: str | None,
+    ledger_label: str | None,
+    ledger_sub_label: str | None,
+    payment_method: str | None,
+    payment_status: str | None,
+    vat_bucket: str | None,
+    treasury_workbook_path: str | None,
+    client_ledger_path: str | None,
+    supplier_ledger_path: str | None,
+    force_type: str | None,
+    received_transfer_amount: str | None,
 ) -> RoutingProposal:
     payload = dict(proposed_payload)
     payload.update(
@@ -173,6 +145,17 @@ def _build_routing_payload(
             "standard_path": standard_path or payload.get("standard_path"),
             "accounting_path": accounting_path or payload.get("accounting_path"),
             "worksite_path": worksite_path or payload.get("worksite_path"),
+            "operation_type": operation_type or payload.get("operation_type"),
+            "ledger_label": ledger_label or payload.get("ledger_label"),
+            "ledger_sub_label": ledger_sub_label or payload.get("ledger_sub_label"),
+            "payment_method": payment_method or payload.get("payment_method"),
+            "payment_status": payment_status or payload.get("payment_status"),
+            "vat_bucket": vat_bucket or payload.get("vat_bucket"),
+            "treasury_workbook_path": treasury_workbook_path or payload.get("treasury_workbook_path"),
+            "client_ledger_path": client_ledger_path or payload.get("client_ledger_path"),
+            "supplier_ledger_path": supplier_ledger_path or payload.get("supplier_ledger_path"),
+            "force_type": force_type or payload.get("force_type"),
+            "received_transfer_amount": received_transfer_amount or payload.get("received_transfer_amount"),
         }
     )
     return RoutingProposal.model_validate(payload)
@@ -455,6 +438,17 @@ async def submit_routing(
     standard_path: str | None = Form(default=None),
     accounting_path: str | None = Form(default=None),
     worksite_path: str | None = Form(default=None),
+    operation_type: str | None = Form(default=None),
+    ledger_label: str | None = Form(default=None),
+    ledger_sub_label: str | None = Form(default=None),
+    payment_method: str | None = Form(default=None),
+    payment_status: str | None = Form(default=None),
+    vat_bucket: str | None = Form(default=None),
+    treasury_workbook_path: str | None = Form(default=None),
+    client_ledger_path: str | None = Form(default=None),
+    supplier_ledger_path: str | None = Form(default=None),
+    force_type: str | None = Form(default=None),
+    received_transfer_amount: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     task = get_routing_task(token, settings)
@@ -463,6 +457,7 @@ async def submit_routing(
     corrected = None
     corrected_document = None
     dispatch_result = None
+    dispatch_error = None
     if decision != "reject":
         corrected_document = _build_routing_document_payload(
             task["document_payload"],
@@ -491,6 +486,17 @@ async def submit_routing(
             standard_path,
             accounting_path,
             worksite_path,
+            operation_type,
+            ledger_label,
+            ledger_sub_label,
+            payment_method,
+            payment_status,
+            vat_bucket,
+            treasury_workbook_path,
+            client_ledger_path,
+            supplier_ledger_path,
+            force_type,
+            received_transfer_amount,
         )
         corrected = hydrate_routing_proposal(
             task["document_id"],
@@ -535,7 +541,16 @@ async def submit_routing(
             settings,
         )
     if decision == "approve" and settings.routing_auto_dispatch:
-        dispatch_result = dispatch_document(task["document_id"], settings=settings)
+        try:
+            dispatch_result = dispatch_document(task["document_id"], settings=settings, strict_excel=True)
+        except Exception as exc:
+            dispatch_error = str(exc)
+            revert_routing_to_pending(
+                token,
+                corrected,
+                f"Validation Excel bloquée: {dispatch_error}",
+                settings=settings,
+            )
     task = get_routing_task(token, settings)
     return templates.TemplateResponse(
         request=request,
@@ -544,6 +559,7 @@ async def submit_routing(
             "task": task,
             "result": result,
             "dispatch_result": dispatch_result,
+            "dispatch_error": dispatch_error,
             "base_path": _template_base_path(settings),
         },
     )

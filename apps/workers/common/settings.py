@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 30
     app_name: str = "automatisations-platform"
     public_base_url: str | None = None
+    accounting_share_root: Path | None = None
+    client_ledgers_root: Path | None = None
+    supplier_ledgers_root: Path | None = None
+    treasury_ledgers_root: Path | None = None
     default_excel_mapping: str = "purchases"
     default_excel_mappings: list[str] = Field(
         default_factory=lambda: [
@@ -165,6 +169,30 @@ class Settings(BaseSettings):
     @property
     def classified_worksites_dir(self) -> Path:
         return self.data_root / "classified" / "worksites"
+
+    @property
+    def resolved_client_ledgers_root(self) -> Path | None:
+        if self.client_ledgers_root:
+            return self.client_ledgers_root
+        if self.accounting_share_root:
+            return self.accounting_share_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_CLIENT"
+        return None
+
+    @property
+    def resolved_supplier_ledgers_root(self) -> Path | None:
+        if self.supplier_ledgers_root:
+            return self.supplier_ledgers_root
+        if self.accounting_share_root:
+            return self.accounting_share_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_FOURNISSEUR"
+        return None
+
+    @property
+    def resolved_treasury_ledgers_root(self) -> Path | None:
+        if self.treasury_ledgers_root:
+            return self.treasury_ledgers_root
+        if self.accounting_share_root:
+            return self.accounting_share_root / "04_EXPERT_COMPTABLE" / "06_Suivie_Tresorerie"
+        return None
 
     @property
     def all_managed_directories(self) -> list[Path]:

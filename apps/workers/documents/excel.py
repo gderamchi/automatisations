@@ -52,7 +52,13 @@ def _find_mapping(mapping_name: str, settings: Settings) -> Path:
     raise FileNotFoundError(f"Excel mapping not found: {mapping_name}")
 
 
-def _load_document_payload(document_id: int, settings: Settings) -> dict[str, Any]:
+def _load_document_payload(
+    document_id: int,
+    settings: Settings,
+    *,
+    document_payload_override: dict[str, Any] | None = None,
+    routing_payload_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     with get_connection(settings) as connection:
         row = connection.execute(
             """
@@ -76,6 +82,10 @@ def _load_document_payload(document_id: int, settings: Settings) -> dict[str, An
         ).fetchone()
         project_row = None
         project_ref = row["project_ref"] if row else None
+        if routing_payload_override and routing_payload_override.get("worksite_external_id"):
+            project_ref = routing_payload_override["worksite_external_id"]
+        elif routing_payload_override and routing_payload_override.get("target_label"):
+            project_ref = routing_payload_override["target_label"]
         if project_ref:
             project_row = connection.execute(
                 """
@@ -92,6 +102,8 @@ def _load_document_payload(document_id: int, settings: Settings) -> dict[str, An
     payload_json = row["validated_payload_json"] or row["normalized_payload_json"]
     payload = json.loads(payload_json) if payload_json else {}
     routing_payload = json.loads((routing_row["corrected_payload_json"] or routing_row["proposed_payload_json"]) if routing_row else "{}")
+    if routing_payload_override:
+        routing_payload = {**routing_payload, **routing_payload_override}
     for field in (
         "source_name",
         "supplier_name",
@@ -114,7 +126,25 @@ def _load_document_payload(document_id: int, settings: Settings) -> dict[str, An
     ):
         if row[field] is not None:
             payload[field] = row[field]
-    for field in ("expense_label", "target_label", "worksite_external_id", "client_external_id"):
+    if document_payload_override:
+        payload.update({key: value for key, value in document_payload_override.items() if value is not None})
+    for field in (
+        "expense_label",
+        "target_label",
+        "worksite_external_id",
+        "client_external_id",
+        "operation_type",
+        "ledger_label",
+        "ledger_sub_label",
+        "payment_method",
+        "payment_status",
+        "vat_bucket",
+        "treasury_workbook_path",
+        "client_ledger_path",
+        "supplier_ledger_path",
+        "force_type",
+        "received_transfer_amount",
+    ):
         if routing_payload.get(field) is not None:
             payload[field] = routing_payload[field]
     if project_row:
@@ -122,6 +152,12 @@ def _load_document_payload(document_id: int, settings: Settings) -> dict[str, An
             payload["project_code"] = project_row["project_code"]
         if project_row["project_name"] is not None:
             payload["project_name"] = project_row["project_name"]
+        metadata = json.loads(project_row["metadata_json"] or "{}")
+        client = metadata.get("client") or {}
+        if client.get("name"):
+            payload["client_name"] = client["name"]
+        if metadata.get("status"):
+            payload["worksite_status"] = metadata["status"]
     payload["excel_invoice_label"] = _format_invoice_label(payload.get("invoice_number"))
     payload["excel_description"] = payload.get("expense_label") or payload.get("target_label") or payload.get("supplier_name")
     payload["excel_operation_type"] = DOCUMENT_KIND_TO_OPERATION.get(str(payload.get("document_kind") or ""), "Facture fournisseur")
@@ -324,8 +360,21 @@ def write_document_bundle(
     *,
     strict: bool = True,
     settings: Settings | None = None,
+    document_payload_override: dict[str, Any] | None = None,
+    routing_payload_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current = settings or get_settings()
+    if has_nas_excel_targets(current):
+        from apps.workers.documents.nas_excel import write_nas_document_bundle
+
+        return write_nas_document_bundle(
+            document_id,
+            strict=strict,
+            settings=current,
+            document_payload_override=document_payload_override,
+            routing_payload_override=routing_payload_override,
+        )
+
     names = list(mapping_names or list(current.default_excel_mappings))
     for mapping_name in current.optional_excel_mappings:
         if mapping_name not in names:
@@ -362,3 +411,32 @@ def write_document_bundle(
         "mappings": results,
         "errors": errors,
     }
+
+
+def has_nas_excel_targets(settings: Settings | None = None) -> bool:
+    from apps.workers.documents.nas_excel import has_nas_excel_targets as _impl
+
+    return _impl(settings or get_settings())
+
+
+def build_excel_review_payload(
+    document_id: int,
+    *,
+    settings: Settings | None = None,
+    document_payload_override: dict[str, Any] | None = None,
+    routing_payload_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from apps.workers.documents.nas_excel import build_excel_review_payload as _impl
+
+    return _impl(
+        document_id,
+        settings=settings or get_settings(),
+        document_payload_override=document_payload_override,
+        routing_payload_override=routing_payload_override,
+    )
+
+
+def get_excel_form_options() -> dict[str, list[str]]:
+    from apps.workers.documents.nas_excel import get_excel_form_options as _impl
+
+    return _impl()

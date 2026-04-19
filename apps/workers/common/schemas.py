@@ -58,6 +58,17 @@ class RoutingProposal(BaseModel):
     standard_path: str | None = None
     accounting_path: str | None = None
     worksite_path: str | None = None
+    operation_type: str | None = None
+    ledger_label: str | None = None
+    ledger_sub_label: str | None = None
+    payment_method: str | None = None
+    payment_status: str | None = None
+    vat_bucket: str | None = None
+    treasury_workbook_path: str | None = None
+    client_ledger_path: str | None = None
+    supplier_ledger_path: str | None = None
+    force_type: str | None = None
+    received_transfer_amount: str | None = None
     manual_hints: dict[str, Any] = Field(default_factory=dict)
     matching_notes: list[str] = Field(default_factory=list)
     ambiguous_match: bool = False

@@ -7,11 +7,13 @@ services:
     environment:
       DATA_ROOT: /data
       DB_PATH: /data/state/sqlite/automation.db
+      ACCOUNTING_SHARE_ROOT: ${ACCOUNTING_SHARE_ROOT:-/mnt/professionnel_ccm/02_Comptabilité_Vert}
     command: uvicorn apps.api.app.main:app --host 0.0.0.0 --port 8080
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
       - automation_data:/data
+      - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
       interval: 30s
@@ -29,9 +31,11 @@ services:
     environment:
       DATA_ROOT: /data
       DB_PATH: /data/state/sqlite/automation.db
+      ACCOUNTING_SHARE_ROOT: ${ACCOUNTING_SHARE_ROOT:-/mnt/professionnel_ccm/02_Comptabilité_Vert}
     command: python -m apps.workers.cli init-db
     volumes:
       - automation_data:/data
+      - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
     restart: "no"
     profiles: ["init"]
 
@@ -43,9 +47,11 @@ services:
     environment:
       DATA_ROOT: /data
       DB_PATH: /data/state/sqlite/automation.db
+      ACCOUNTING_SHARE_ROOT: ${ACCOUNTING_SHARE_ROOT:-/mnt/professionnel_ccm/02_Comptabilité_Vert}
     command: python -m apps.workers.cli mail-worker
     volumes:
       - automation_data:/data
+      - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
     depends_on:
       api:
         condition: service_healthy
@@ -69,6 +75,7 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
       - automation_data:/data
+      - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
       - ../../n8n/workflows:/workflows:ro
     depends_on:
       api:

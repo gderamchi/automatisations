@@ -12,10 +12,11 @@
 
 1. Copier `.env.example` vers `.env` et renseigner les secrets.
    - Positionner `ENVIRONMENT=production` sur NAS.
-   - Renseigner `PUBLIC_BASE_URL` avec l'URL publique HTTPS exacte exposee par le NAS.
-   - Si le reverse proxy publie l'app sous un sous-chemin, inclure ce sous-chemin dans `PUBLIC_BASE_URL` (ex: `https://domaine.tld/automatisations`).
+   - Renseigner `PUBLIC_BASE_URL` avec le domaine public HTTPS expose par le NAS.
    - Renseigner `INTERNAL_API_BASE_URL` (par defaut `http://api:8080`) pour les workflows n8n.
+   - Pour l'ecriture Excel NAS, verifier que `ACCOUNTING_SHARE_HOST_PATH`, `ACCOUNTING_SHARE_MOUNT` et `ACCOUNTING_SHARE_ROOT` pointent vers le partage comptable actif.
 2. Monter le partage NAS en volume Docker pour `/data`.
+   - Le compose NAS monte aussi le partage `Professionnel_CCM` vers `${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}` pour les grands livres et la tresorerie.
 3. Initialiser la base (one-shot):
 
 ```bash
@@ -34,9 +35,9 @@ docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker
    - une ingestion manuelle
    - un OCR
    - une validation
+   - une validation de routage avec verification d'ecriture dans la tresorerie mensuelle, le grand livre client et le grand livre fournisseur
    - un export Inexweb
    - un email de test avec verification que les liens recus utilisent `PUBLIC_BASE_URL` (jamais localhost)
-   - un clic reel sur un lien de mail (`/review`, `/validate` ou `/route`) pour verifier que l'URL publique NAS ouvre bien l'interface, en racine comme sous sous-chemin
 
 ## Durcissement recommande
 
@@ -44,7 +45,6 @@ docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker
 - Passer `OCR_MOCK_MODE=false`.
 - Exposer l'UI derriere VPN ou reverse proxy NAS.
 - Sauvegarder regulierement `state/sqlite` et `archive`.
-- Aucun changement de schema DB ni regeneration de token n'est necessaire pour activer un sous-chemin public.
 
 ## Mode auto-update (recommande)
 
