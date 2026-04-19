@@ -407,7 +407,7 @@ class MailAutomationWorker:
         reply_lines = [_format_attachment_result(r, base_url) for r in results]
         body = _build_reply_body(mail, reply_lines, base_url, batch_token)
         subject = f"{self.settings.mail_reply_subject_prefix} Re: {mail.subject or '(sans sujet)'}"
-        reply_recipient = self.settings.reply_to_email or mail.recipient_email
+        reply_recipient = mail.sender_email or self.settings.reply_to_email or mail.recipient_email
         if not reply_recipient:
             self.logger.warning("No reply recipient found for uid=%s, skipping reply", mail.uid)
             return

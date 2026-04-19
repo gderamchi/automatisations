@@ -83,7 +83,7 @@ def test_mail_worker_processes_multiple_attachments_and_creates_routing_tasks(te
     assert summary["routing_tasks_created"] == 1
     assert summary["reply_sent"] == 1
     assert len(sent_messages) == 1
-    assert sent_messages[0][0][1] == "owner@example.com"
+    assert sent_messages[0][0][1] == "supplier@example.com"
 
     with get_connection(test_settings) as connection:
         processed_count = connection.execute("SELECT COUNT(*) FROM processed_emails").fetchone()[0]
@@ -121,7 +121,7 @@ def test_mail_worker_does_not_reprocess_same_email(test_settings, sample_invoice
     assert second_summary["reply_sent"] == 0
     assert second_summary["routing_tasks_created"] == 0
     assert len(sent_messages) == 1
-    assert sent_messages[0][0][1] == "owner@example.com"
+    assert sent_messages[0][0][1] == "supplier@example.com"
 
 
 def test_mail_worker_ignores_generated_reply_and_reports_unsupported_attachment(test_settings):
@@ -162,7 +162,7 @@ def test_mail_worker_ignores_generated_reply_and_reports_unsupported_attachment(
     assert summary["reply_sent"] == 1
     assert summary["routing_tasks_created"] == 0
     assert len(sent_messages) == 1
-    assert sent_messages[0][0][1] == "owner@example.com"
+    assert sent_messages[0][0][1] == "supplier@example.com"
 
 
 def _extract_text_body(message) -> str:
@@ -220,11 +220,43 @@ def test_mail_worker_reply_links_use_public_base_url_for_validation(test_setting
     message, recipient = sent_messages[0][0]
     body = _extract_text_body(message)
 
-    assert recipient == "owner@example.com"
+    assert recipient == "supplier@example.com"
     assert "https://ocr.example.com/review/batch-token-123" in body
     assert "https://ocr.example.com/validate/val-token-123" in body
     assert "localhost" not in body
     assert "127.0.0.1" not in body
+
+
+def test_mail_worker_replies_to_original_sender_even_with_reply_to_configured(test_settings):
+    sent_messages = []
+    worker = MailAutomationWorker(
+        settings=test_settings,
+        imap_factory=lambda: FakeImapClient({}),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
+    )
+
+    worker._send_reply(
+        _sample_mail(),
+        [
+            {
+                "status": "ok",
+                "attachment": "invoice-a.txt",
+                "fields": {
+                    "supplier_name": "ACME BTP SAS",
+                },
+                "validation_required": False,
+                "validation_token": None,
+                "routing_token": None,
+                "auto_approved": False,
+                "duplicate": False,
+            }
+        ],
+        batch_token="batch-token-recipient",
+    )
+
+    assert len(sent_messages) == 1
+    _message, recipient = sent_messages[0][0]
+    assert recipient == "supplier@example.com"
 
 
 def test_mail_worker_reply_links_use_public_base_url_for_routing(test_settings):
