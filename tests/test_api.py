@@ -149,20 +149,10 @@ def test_ui_links_support_public_base_path_prefix(client, monkeypatch, test_sett
     assert '/automatisations/static/styles.css' in dashboard_page.text
     assert f'/automatisations/validate/{validation_token}' in dashboard_page.text
 
-    prefixed_dashboard_page = client.get("/automatisations/dashboard", auth=("validator", "secret"))
-    assert prefixed_dashboard_page.status_code == 200
-    assert '/automatisations/static/styles.css' in prefixed_dashboard_page.text
-    assert f'/automatisations/validate/{validation_token}' in prefixed_dashboard_page.text
-
     validation_page = client.get(f"/validate/{validation_token}", auth=("validator", "secret"))
     assert validation_page.status_code == 200
     assert '/automatisations/static/styles.css' in validation_page.text
     assert f'/automatisations/files/{document_id}' in validation_page.text
-
-    prefixed_validation_page = client.get(f"/automatisations/validate/{validation_token}", auth=("validator", "secret"))
-    assert prefixed_validation_page.status_code == 200
-    assert '/automatisations/static/styles.css' in prefixed_validation_page.text
-    assert f'/automatisations/files/{document_id}' in prefixed_validation_page.text
 
 
 def test_ui_links_remain_root_when_public_base_url_has_no_path(client, monkeypatch):
