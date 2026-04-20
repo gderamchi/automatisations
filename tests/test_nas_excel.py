@@ -241,9 +241,32 @@ def test_build_excel_review_payload_resolves_nas_targets(nas_excel_root, test_se
 
     assert review["enabled"] is True
     assert review["errors"] == []
+    assert review["targets"]["treasury"]["status"] == "ready"
+    assert review["targets"]["client"]["status"] == "ready"
+    assert review["targets"]["supplier"]["status"] == "ready"
     assert review["defaults"]["treasury_workbook_path"].endswith("2026-04-01_FINANCE_TRESORERIE_AVRIL_2026_en cours.xlsx")
     assert review["defaults"]["client_ledger_path"].endswith("CLI-0001_FRAMPAS_GRAND_LIVRE_CLIENT.xlsx")
     assert review["defaults"]["supplier_ledger_path"].endswith("FOU-0001_JORISIDE_GRAND_LIVRE_FOURNISSEUR.xlsx")
+    assert review["targets"]["treasury"]["recommended_value"].endswith("2026-04-01_FINANCE_TRESORERIE_AVRIL_2026_en cours.xlsx")
+    assert review["targets"]["client"]["options"][0]["recommended"] is True
+    assert review["targets"]["supplier"]["options"][0]["recommended"] is True
+
+
+def test_build_excel_review_payload_marks_selectable_targets_as_needs_selection(nas_excel_root, test_settings, tmp_path, sample_invoice_text):
+    extra_client_ledger = nas_excel_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_CLIENT" / "CLI-0002_AUTRE_GRAND_LIVRE_CLIENT.xlsx"
+    _create_client_ledger_workbook(extra_client_ledger)
+    document_id = _prepare_document(test_settings, tmp_path, sample_invoice_text, supplier_name="INCONNU")
+    review = build_excel_review_payload(document_id, settings=test_settings)
+
+    assert review["enabled"] is True
+    assert review["errors"] == []
+    assert review["targets"]["treasury"]["status"] == "ready"
+    assert review["targets"]["client"]["status"] == "needs_selection"
+    assert review["targets"]["client"]["options"]
+    assert review["targets"]["client"]["message"] == "Choisissez un fichier pour continuer."
+    assert review["targets"]["supplier"]["status"] == "needs_selection"
+    assert review["targets"]["supplier"]["options"]
+    assert review["targets"]["supplier"]["message"] == "Choisissez un fichier pour continuer."
 
 
 def test_write_document_bundle_writes_all_nas_targets(nas_excel_root, test_settings, tmp_path, sample_invoice_text):
@@ -295,6 +318,178 @@ def test_write_document_bundle_writes_all_nas_targets(nas_excel_root, test_setti
     assert supplier_sheet["O11"].value == "A payer"
 
 
+def test_routing_submit_accepts_selected_supplier_and_client_ledgers(client, nas_excel_root, test_settings, tmp_path, incomplete_invoice_text):
+    invoice = tmp_path / "invoice-selected-ledgers.txt"
+    invoice.write_text(incomplete_invoice_text, encoding="utf-8")
+
+    ingest = client.post(
+        "/internal/documents/ingest",
+        headers={"X-Internal-Token": "test-token"},
+        json={"source_path": str(invoice), "source_kind": "manual"},
+    )
+    document_id = ingest.json()["document_id"]
+    ocr = client.post(f"/internal/documents/{document_id}/ocr", headers={"X-Internal-Token": "test-token"})
+    validation_token = ocr.json()["validation_token"]
+
+    client.post(
+        f"/validate/{validation_token}",
+        auth=("validator", "secret"),
+        data={
+            "document_type": "purchase_invoice",
+            "document_kind": "invoice",
+            "decision": "approve",
+            "validator_name": "ops",
+            "supply_type": "materiel",
+            "supplier_name": "INCONNU",
+            "invoice_number": "FAC-2026-777",
+            "invoice_date": "2026-04-10",
+            "due_date": "2026-04-30",
+            "currency": "EUR",
+            "net_amount": "1000.00",
+            "vat_amount": "200.00",
+            "gross_amount": "1200.00",
+            "project_ref": "PROJET-X",
+        },
+    )
+
+    upsert_project(
+        external_project_id="53032",
+        project_code="CCM-002",
+        project_name="12576-6-RONDEAU - CCM2026-002",
+        metadata={"client": {"id": 1950319, "name": "FRAMPAS"}, "status": "signed"},
+        settings=test_settings,
+    )
+    with get_connection(test_settings) as connection:
+        routing_token = connection.execute(
+            "SELECT token FROM routing_tasks WHERE document_id = ? ORDER BY id DESC LIMIT 1",
+            (document_id,),
+        ).fetchone()["token"]
+
+    client_ledger_path = nas_excel_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_CLIENT" / "CLI-0001_FRAMPAS_GRAND_LIVRE_CLIENT.xlsx"
+    supplier_ledger_path = nas_excel_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_FOURNISSEUR" / "FOU-0001_JORISIDE_GRAND_LIVRE_FOURNISSEUR.xlsx"
+
+    response = client.post(
+        f"/route/{routing_token}",
+        auth=("validator", "secret"),
+        data={
+            "decision": "approve",
+            "validator_name": "ops",
+            "document_kind": "invoice",
+            "supply_type": "materiel",
+            "expense_label": "Achat de matériel INCONNU",
+            "routing_confidence": "0.94",
+            "supplier_name": "INCONNU",
+            "invoice_number": "FAC-2026-777",
+            "invoice_date": "2026-04-10",
+            "currency": "EUR",
+            "net_amount": "1000.00",
+            "vat_amount": "200.00",
+            "gross_amount": "1200.00",
+            "worksite_external_id": "53032",
+            "operation_type": "Facture fournisseur",
+            "ledger_label": "Fournitures",
+            "ledger_sub_label": "Matériaux",
+            "payment_method": "Virement",
+            "payment_status": "A payer",
+            "vat_bucket": "20",
+            "client_ledger_path_selected": str(client_ledger_path),
+            "supplier_ledger_path_selected": str(supplier_ledger_path),
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Dispatch: dispatched" in response.text
+
+
+def test_routing_submit_manual_supplier_ledger_overrides_selected_value(client, nas_excel_root, test_settings, tmp_path, incomplete_invoice_text):
+    invoice = tmp_path / "invoice-manual-ledger.txt"
+    invoice.write_text(incomplete_invoice_text, encoding="utf-8")
+
+    ingest = client.post(
+        "/internal/documents/ingest",
+        headers={"X-Internal-Token": "test-token"},
+        json={"source_path": str(invoice), "source_kind": "manual"},
+    )
+    document_id = ingest.json()["document_id"]
+    ocr = client.post(f"/internal/documents/{document_id}/ocr", headers={"X-Internal-Token": "test-token"})
+    validation_token = ocr.json()["validation_token"]
+
+    client.post(
+        f"/validate/{validation_token}",
+        auth=("validator", "secret"),
+        data={
+            "document_type": "purchase_invoice",
+            "document_kind": "invoice",
+            "decision": "approve",
+            "validator_name": "ops",
+            "supply_type": "materiel",
+            "supplier_name": "INCONNU",
+            "invoice_number": "FAC-2026-778",
+            "invoice_date": "2026-04-10",
+            "due_date": "2026-04-30",
+            "currency": "EUR",
+            "net_amount": "1000.00",
+            "vat_amount": "200.00",
+            "gross_amount": "1200.00",
+            "project_ref": "PROJET-X",
+        },
+    )
+
+    upsert_project(
+        external_project_id="53032",
+        project_code="CCM-002",
+        project_name="12576-6-RONDEAU - CCM2026-002",
+        metadata={"client": {"id": 1950319, "name": "FRAMPAS"}, "status": "signed"},
+        settings=test_settings,
+    )
+    with get_connection(test_settings) as connection:
+        routing_token = connection.execute(
+            "SELECT token FROM routing_tasks WHERE document_id = ? ORDER BY id DESC LIMIT 1",
+            (document_id,),
+        ).fetchone()["token"]
+
+    selected_supplier_ledger = nas_excel_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_FOURNISSEUR" / "FOU-0001_JORISIDE_GRAND_LIVRE_FOURNISSEUR.xlsx"
+    manual_supplier_ledger = tmp_path / "MANUAL_SUPPLIER_LEDGER.xlsx"
+    _create_supplier_ledger_workbook(manual_supplier_ledger)
+
+    response = client.post(
+        f"/route/{routing_token}",
+        auth=("validator", "secret"),
+        data={
+            "decision": "approve",
+            "validator_name": "ops",
+            "document_kind": "invoice",
+            "supply_type": "materiel",
+            "expense_label": "Achat de matériel INCONNU",
+            "routing_confidence": "0.94",
+            "supplier_name": "INCONNU",
+            "invoice_number": "FAC-2026-778",
+            "invoice_date": "2026-04-10",
+            "currency": "EUR",
+            "net_amount": "1000.00",
+            "vat_amount": "200.00",
+            "gross_amount": "1200.00",
+            "worksite_external_id": "53032",
+            "operation_type": "Facture fournisseur",
+            "ledger_label": "Fournitures",
+            "ledger_sub_label": "Matériaux",
+            "payment_method": "Virement",
+            "payment_status": "A payer",
+            "vat_bucket": "20",
+            "supplier_ledger_path_selected": str(selected_supplier_ledger),
+            "supplier_ledger_path_manual": str(manual_supplier_ledger),
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Dispatch: dispatched" in response.text
+
+    manual_book = load_workbook(manual_supplier_ledger)
+    selected_book = load_workbook(selected_supplier_ledger)
+    assert manual_book["Feuil1"]["A11"].value.date() == date(2026, 4, 10)
+    assert selected_book["Feuil1"]["A11"].value is None
+
+
 def test_routing_submit_blocks_when_supplier_ledger_missing(client, nas_excel_root, test_settings, tmp_path, incomplete_invoice_text):
     invoice = tmp_path / "invoice-missing-supplier.txt"
     invoice.write_text(incomplete_invoice_text, encoding="utf-8")
@@ -336,6 +531,9 @@ def test_routing_submit_blocks_when_supplier_ledger_missing(client, nas_excel_ro
         metadata={"client": {"id": 1950319, "name": "FRAMPAS"}, "status": "signed"},
         settings=test_settings,
     )
+    supplier_root = nas_excel_root / "04_EXPERT_COMPTABLE" / "05_Grand_Livre" / "GRAND_LIVRE_FOURNISSEUR"
+    for workbook in supplier_root.glob("*.xlsx"):
+        workbook.unlink()
     with get_connection(test_settings) as connection:
         routing_token = connection.execute(
             "SELECT token FROM routing_tasks WHERE document_id = ? ORDER BY id DESC LIMIT 1",

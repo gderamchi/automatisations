@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from decimal import Decimal
+import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Form, HTTPException
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi import Request
 
 from apps.api.app.auth import require_internal_token, require_validation_user
 from apps.workers.banking.importer import import_bank_csv
@@ -63,6 +63,43 @@ def _template_base_path(settings: Settings) -> str:
     if not path:
         return ""
     return path if path.startswith("/") else f"/{path}"
+
+
+def _document_file_media_type(path: Path) -> str:
+    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _document_preview_kind(media_type: str) -> str:
+    if media_type == "application/pdf":
+        return "pdf"
+    if media_type.startswith("image/"):
+        return "image"
+    if media_type.startswith("text/"):
+        return "text"
+    return "unsupported"
+
+
+def _build_document_preview(document_id: int, settings: Settings) -> dict[str, str]:
+    base_path = _template_base_path(settings)
+    path = get_document_file_path(document_id, settings)
+    media_type = _document_file_media_type(path)
+    return {
+        "preview_url": f"{base_path}/files/{document_id}/preview" if base_path else f"/files/{document_id}/preview",
+        "download_url": f"{base_path}/files/{document_id}" if base_path else f"/files/{document_id}",
+        "filename": path.name,
+        "mime_type": media_type,
+        "preview_kind": _document_preview_kind(media_type),
+    }
+
+
+def _task_template_context(task: dict, settings: Settings, **extra: object) -> dict[str, object]:
+    context: dict[str, object] = {
+        "task": task,
+        "preview": _build_document_preview(task["document_id"], settings),
+        "base_path": _template_base_path(settings),
+    }
+    context.update(extra)
+    return context
 
 
 def _build_corrected_payload(
@@ -257,11 +294,31 @@ async def dashboard(
 
 
 @app.get("/files/{document_id}")
+async def file_download(
+    document_id: int,
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    path = get_document_file_path(document_id, settings)
+    return FileResponse(
+        path,
+        media_type=_document_file_media_type(path),
+        filename=path.name,
+        content_disposition_type="attachment",
+    )
+
+
+@app.get("/files/{document_id}/preview")
 async def file_preview(
     document_id: int,
+    settings: Settings = Depends(get_settings),
 ) -> FileResponse:
-    path = get_document_file_path(document_id)
-    return FileResponse(path)
+    path = get_document_file_path(document_id, settings)
+    return FileResponse(
+        path,
+        media_type=_document_file_media_type(path),
+        filename=path.name,
+        content_disposition_type="inline",
+    )
 
 
 @app.get("/review/{batch_token}", response_class=HTMLResponse)
@@ -325,7 +382,7 @@ async def validation_page(
     return templates.TemplateResponse(
         request=request,
         name="validation_detail.html",
-        context={"task": task, "base_path": _template_base_path(settings)},
+        context=_task_template_context(task, settings),
     )
 
 
@@ -386,11 +443,7 @@ async def submit_validation(
     return templates.TemplateResponse(
         request=request,
         name="validation_detail.html",
-        context={
-            "task": task,
-            "result": result,
-            "base_path": _template_base_path(settings),
-        },
+        context=_task_template_context(task, settings, result=result),
     )
 
 
@@ -406,7 +459,7 @@ async def routing_page(
     return templates.TemplateResponse(
         request=request,
         name="routing_detail.html",
-        context={"task": task, "base_path": _template_base_path(settings)},
+        context=_task_template_context(task, settings),
     )
 
 
@@ -445,8 +498,10 @@ async def submit_routing(
     payment_status: str | None = Form(default=None),
     vat_bucket: str | None = Form(default=None),
     treasury_workbook_path: str | None = Form(default=None),
-    client_ledger_path: str | None = Form(default=None),
-    supplier_ledger_path: str | None = Form(default=None),
+    client_ledger_path_selected: str | None = Form(default=None),
+    client_ledger_path_manual: str | None = Form(default=None),
+    supplier_ledger_path_selected: str | None = Form(default=None),
+    supplier_ledger_path_manual: str | None = Form(default=None),
     force_type: str | None = Form(default=None),
     received_transfer_amount: str | None = Form(default=None),
     settings: Settings = Depends(get_settings),
@@ -493,8 +548,8 @@ async def submit_routing(
             payment_status,
             vat_bucket,
             treasury_workbook_path,
-            client_ledger_path,
-            supplier_ledger_path,
+            (client_ledger_path_manual or "").strip() or (client_ledger_path_selected or "").strip() or None,
+            (supplier_ledger_path_manual or "").strip() or (supplier_ledger_path_selected or "").strip() or None,
             force_type,
             received_transfer_amount,
         )
@@ -535,14 +590,23 @@ async def submit_routing(
     )
     if corrected_document:
         project_ref = corrected.target_label if corrected else task["document_payload"].get("project_ref")
+        corrected_document_payload = corrected_document.model_dump(mode="json") | {"project_ref": project_ref}
         update_document_payload_from_routing(
             task["document_id"],
-            corrected_document.model_dump(mode="json") | {"project_ref": project_ref},
+            corrected_document_payload,
             settings,
         )
+    else:
+        corrected_document_payload = None
     if decision == "approve" and settings.routing_auto_dispatch:
         try:
-            dispatch_result = dispatch_document(task["document_id"], settings=settings, strict_excel=True)
+            dispatch_result = dispatch_document(
+                task["document_id"],
+                settings=settings,
+                strict_excel=True,
+                document_payload_override=corrected_document_payload,
+                routing_payload_override=corrected.model_dump(mode="json") if corrected else None,
+            )
         except Exception as exc:
             dispatch_error = str(exc)
             revert_routing_to_pending(
@@ -555,13 +619,13 @@ async def submit_routing(
     return templates.TemplateResponse(
         request=request,
         name="routing_detail.html",
-        context={
-            "task": task,
-            "result": result,
-            "dispatch_result": dispatch_result,
-            "dispatch_error": dispatch_error,
-            "base_path": _template_base_path(settings),
-        },
+        context=_task_template_context(
+            task,
+            settings,
+            result=result,
+            dispatch_result=dispatch_result,
+            dispatch_error=dispatch_error,
+        ),
     )
 
 

@@ -118,6 +118,40 @@ def test_dashboard_requires_basic_auth(client):
     assert response.status_code == 401
 
 
+def test_file_preview_route_serves_inline_and_validation_page_links_to_download(client, tmp_path, test_settings, incomplete_invoice_text):
+    invoice = tmp_path / "invoice-preview.txt"
+    invoice.write_text(incomplete_invoice_text, encoding="utf-8")
+
+    ingest = client.post(
+        "/internal/documents/ingest",
+        headers={"X-Internal-Token": "test-token"},
+        json={"source_path": str(invoice), "source_kind": "manual"},
+    )
+    document_id = ingest.json()["document_id"]
+
+    preview = client.get(f"/files/{document_id}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-disposition"].startswith("inline;")
+    assert preview.headers["content-type"].startswith("text/plain")
+
+    download = client.get(f"/files/{document_id}")
+    assert download.status_code == 200
+    assert download.headers["content-disposition"].startswith("attachment;")
+    assert download.headers["content-type"].startswith("text/plain")
+
+    ocr = client.post(
+        f"/internal/documents/{document_id}/ocr",
+        headers={"X-Internal-Token": "test-token"},
+    )
+    validation_token = ocr.json()["validation_token"]
+
+    validation_page = client.get(f"/validate/{validation_token}", auth=("validator", "secret"))
+    assert validation_page.status_code == 200
+    assert f'/files/{document_id}/preview' in validation_page.text
+    assert f'href="/files/{document_id}"' in validation_page.text
+    assert "Télécharger le document" in validation_page.text
+
+
 def test_ui_links_support_public_base_path_prefix(client, monkeypatch, test_settings, incomplete_invoice_text, tmp_path):
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://example.test/automatisations")
     get_settings.cache_clear()
@@ -152,7 +186,8 @@ def test_ui_links_support_public_base_path_prefix(client, monkeypatch, test_sett
     validation_page = client.get(f"/validate/{validation_token}", auth=("validator", "secret"))
     assert validation_page.status_code == 200
     assert '/automatisations/static/styles.css' in validation_page.text
-    assert f'/automatisations/files/{document_id}' in validation_page.text
+    assert f'/automatisations/files/{document_id}/preview' in validation_page.text
+    assert f'href="/automatisations/files/{document_id}"' in validation_page.text
 
 
 def test_ui_links_remain_root_when_public_base_url_has_no_path(client, monkeypatch):

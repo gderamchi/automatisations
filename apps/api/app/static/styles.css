@@ -163,12 +163,53 @@ h1, h2 {
   gap: 20px;
 }
 
+.preview-body {
+  min-width: 0;
+}
+
 .preview-frame {
   width: 100%;
-  min-height: 720px;
+  height: clamp(360px, 72vh, 960px);
   border: 1px solid var(--line);
   border-radius: 16px;
   background: white;
+}
+
+.preview-frame-text {
+  background: #fcfaf6;
+}
+
+.preview-image {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: white;
+}
+
+.preview-fallback {
+  display: grid;
+  place-items: center;
+  min-height: 260px;
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  background: rgba(239, 228, 213, 0.4);
+  text-align: center;
+}
+
+.preview-fallback-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.preview-links {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
 }
 
 .form-grid {
@@ -355,6 +396,10 @@ select {
   background: rgba(171, 63, 47, 0.06);
 }
 
+.excel-target-warning {
+  background: rgba(30, 100, 200, 0.06);
+}
+
 .excel-target-head {
   display: flex;
   justify-content: space-between;
@@ -387,6 +432,34 @@ select {
   gap: 12px;
   padding-top: 8px;
   border-top: 1px solid rgba(31, 42, 36, 0.08);
+}
+
+.stacked-field {
+  display: grid;
+  gap: 10px;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.manual-entry {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 4px 14px;
+  background: rgba(239, 228, 213, 0.18);
+}
+
+.manual-entry summary {
+  cursor: pointer;
+  padding: 10px 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.manual-entry label {
+  padding-bottom: 12px;
 }
 
 .action-row-sticky {
@@ -423,7 +496,11 @@ select {
   }
 
   .preview-frame {
-    min-height: 56vh;
+    height: 58vh;
+  }
+
+  .preview-image {
+    max-height: 58vh;
   }
 
   .panel {
@@ -442,6 +519,7 @@ select {
   }
 
   .button,
+  .preview-links .button,
   .button.primary-action {
     width: 100%;
   }
@@ -462,11 +540,9 @@ select {
     font-size: 0.95rem;
   }
 
-  .preview-panel {
-    order: 2;
-  }
-
-  .form-panel {
-    order: 1;
+  .preview-frame,
+  .preview-image {
+    height: 52vh;
+    max-height: 52vh;
   }
 }

@@ -908,10 +908,22 @@ def _copy_if_needed(source_path: Path, target_path: Path) -> dict[str, Any]:
     return {"path": str(target_path), "copied": True}
 
 
-def dispatch_document(document_id: int, settings: Settings | None = None, *, strict_excel: bool = False) -> dict[str, Any]:
+def dispatch_document(
+    document_id: int,
+    settings: Settings | None = None,
+    *,
+    strict_excel: bool = False,
+    document_payload_override: dict[str, Any] | None = None,
+    routing_payload_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     current = settings or get_settings()
     init_db(current)
     context = _load_document_context(document_id, current)
+    if document_payload_override:
+        context["payload"] = {
+            **context["payload"],
+            **{key: value for key, value in document_payload_override.items() if value is not None},
+        }
     document = context["document"]
     if document.get("validation_status") != "approved":
         raise RuntimeError(f"Document {document_id} is not approved for dispatch")
@@ -946,12 +958,18 @@ def dispatch_document(document_id: int, settings: Settings | None = None, *, str
             interfast_write_mode=current.interfast_write_mode,
             target_label=document.get("project_ref") or document.get("worksite_external_id"),
         )
+    if routing_payload_override:
+        proposal = RoutingProposal.model_validate(
+            proposal.model_dump(mode="json") | {key: value for key, value in routing_payload_override.items() if value is not None}
+        )
     proposal = hydrate_routing_proposal(document_id, proposal, current, context=context)
 
     excel_result = write_document_bundle(
         document_id,
         settings=current,
         strict=strict_excel and has_nas_excel_targets(current),
+        document_payload_override=context["payload"],
+        routing_payload_override=proposal.model_dump(mode="json"),
     )
     for mapping_result in excel_result["mappings"]:
         _record_dispatch_attempt(

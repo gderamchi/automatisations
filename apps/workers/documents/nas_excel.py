@@ -315,6 +315,98 @@ def _resolve_supplier_ledger(payload: dict[str, Any], settings: Settings, explic
     return _resolve_workbook_by_token(settings.resolved_supplier_ledgers_root, supplier_name)
 
 
+def _build_target_options(
+    workbooks: list[Path],
+    *,
+    recommended_path: Path | None,
+    selected_path: Path | None,
+) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    listed_values = {str(path) for path in workbooks}
+
+    def add_option(path: Path | None, *, recommended: bool = False, manual: bool = False) -> None:
+        if not path:
+            return
+        value = str(path)
+        if value in seen:
+            return
+        label = path.name
+        if recommended:
+            label = f"{label} (Recommandé)"
+        elif manual:
+            label = f"{label} (Chemin manuel)"
+        options.append({"label": label, "value": value, "recommended": recommended})
+        seen.add(value)
+
+    add_option(recommended_path, recommended=True)
+    add_option(
+        selected_path,
+        manual=selected_path is not None and str(selected_path) not in listed_values,
+    )
+    for path in workbooks:
+        add_option(path, recommended=path == recommended_path)
+    return options
+
+
+def _build_target_state(
+    *,
+    label: str,
+    workbooks: list[Path],
+    selected_path: Path | None,
+    recommended_path: Path | None,
+    invalid_value: str | None,
+    missing_message: str,
+) -> dict[str, Any]:
+    options = _build_target_options(
+        workbooks,
+        recommended_path=recommended_path,
+        selected_path=selected_path,
+    )
+    if selected_path:
+        auto_recovered = bool(
+            invalid_value
+            and recommended_path
+            and str(selected_path) == str(recommended_path)
+            and invalid_value != str(selected_path)
+        )
+        return {
+            "label": label,
+            "path": str(selected_path),
+            "status": "ready",
+            "message": "Le fichier recommandé a été préselectionné." if auto_recovered else "Fichier prêt pour l'écriture.",
+            "error": None,
+            "options": options,
+            "selected_value": str(selected_path),
+            "recommended_value": str(recommended_path) if recommended_path else "",
+        }
+    if options:
+        return {
+            "label": label,
+            "path": None,
+            "status": "needs_selection",
+            "message": (
+                "Le chemin précédent est introuvable. Choisissez un fichier."
+                if invalid_value
+                else "Choisissez un fichier pour continuer."
+            ),
+            "error": None,
+            "options": options,
+            "selected_value": "",
+            "recommended_value": str(recommended_path) if recommended_path else "",
+        }
+    return {
+        "label": label,
+        "path": None,
+        "status": "missing",
+        "message": missing_message,
+        "error": missing_message,
+        "options": [],
+        "selected_value": "",
+        "recommended_value": "",
+    }
+
+
 def _resolve_rate_columns(vat_bucket: str) -> tuple[float, float, float]:
     if vat_bucket == "5.5":
         return 0.055, 0.0, 0.0
@@ -391,30 +483,41 @@ def build_excel_review_payload(
     payload["id"] = document_id
     routing_payload = routing_payload_override or {}
     values = _build_review_values(payload, routing_payload)
-    treasury_path, treasury_options = _resolve_treasury_workbook(
+    treasury_selected_path, treasury_options_raw = _resolve_treasury_workbook(
         settings.resolved_treasury_ledgers_root,
         values["invoice_date"],
         routing_payload.get("treasury_workbook_path"),
     )
-    client_path = _resolve_client_ledger(payload, settings, routing_payload.get("client_ledger_path"))
-    supplier_path = _resolve_supplier_ledger(payload, settings, routing_payload.get("supplier_ledger_path"))
+    treasury_recommended_path, _ = _resolve_treasury_workbook(
+        settings.resolved_treasury_ledgers_root,
+        values["invoice_date"],
+        None,
+    )
+    treasury_workbooks = [Path(option["value"]) for option in treasury_options_raw]
+    treasury_active_path = treasury_selected_path or treasury_recommended_path
+
+    client_selected_path = _resolve_client_ledger(payload, settings, routing_payload.get("client_ledger_path"))
+    client_recommended_path = _resolve_client_ledger(payload, settings, None)
+    client_workbooks = _list_workbooks(settings.resolved_client_ledgers_root)
+    client_active_path = client_selected_path or client_recommended_path
+
+    supplier_selected_path = _resolve_supplier_ledger(payload, settings, routing_payload.get("supplier_ledger_path"))
+    supplier_recommended_path = _resolve_supplier_ledger(payload, settings, None)
+    supplier_workbooks = _list_workbooks(settings.resolved_supplier_ledgers_root)
+    supplier_active_path = supplier_selected_path or supplier_recommended_path
 
     targets: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
 
     if has_nas_excel_targets(settings):
-        treasury_error = None if treasury_path else "Classeur de trésorerie introuvable"
-        client_error = None if client_path else "Grand livre client introuvable"
-        supplier_error = None if supplier_path else "Grand livre fournisseur introuvable"
-        for error in (treasury_error, client_error, supplier_error):
-            if error:
-                errors.append(error)
-
-        targets["treasury"] = {
-            "label": "Suivi trésorerie",
-            "path": str(treasury_path) if treasury_path else routing_payload.get("treasury_workbook_path"),
-            "status": "ready" if treasury_path else "error",
-            "error": treasury_error,
+        targets["treasury"] = _build_target_state(
+            label="Suivi trésorerie",
+            workbooks=treasury_workbooks,
+            selected_path=treasury_active_path,
+            recommended_path=treasury_recommended_path,
+            invalid_value=routing_payload.get("treasury_workbook_path"),
+            missing_message="Classeur de trésorerie introuvable",
+        ) | {
             "table_name": "Tableau8",
             "sheet_name": None,
             "values": [
@@ -442,11 +545,14 @@ def build_excel_review_payload(
                 ("TVA collecté", values["vat_collectee"]),
             ],
         }
-        targets["client"] = {
-            "label": "Grand livre client",
-            "path": str(client_path) if client_path else routing_payload.get("client_ledger_path"),
-            "status": "ready" if client_path else "error",
-            "error": client_error,
+        targets["client"] = _build_target_state(
+            label="Grand livre client",
+            workbooks=client_workbooks,
+            selected_path=client_active_path,
+            recommended_path=client_recommended_path,
+            invalid_value=routing_payload.get("client_ledger_path"),
+            missing_message="Grand livre client introuvable",
+        ) | {
             "table_name": "Tresorerie",
             "sheet_name": None,
             "values": [
@@ -476,11 +582,14 @@ def build_excel_review_payload(
                 ("Final", values["final_label"]),
             ],
         }
-        targets["supplier"] = {
-            "label": "Grand livre fournisseur",
-            "path": str(supplier_path) if supplier_path else routing_payload.get("supplier_ledger_path"),
-            "status": "ready" if supplier_path else "error",
-            "error": supplier_error,
+        targets["supplier"] = _build_target_state(
+            label="Grand livre fournisseur",
+            workbooks=supplier_workbooks,
+            selected_path=supplier_active_path,
+            recommended_path=supplier_recommended_path,
+            invalid_value=routing_payload.get("supplier_ledger_path"),
+            missing_message="Grand livre fournisseur introuvable",
+        ) | {
             "values": [
                 ("Date", values["invoice_date"]),
                 ("N° Facture", values["invoice_label"]),
@@ -496,6 +605,7 @@ def build_excel_review_payload(
                 ("Statut", values["payment_status"]),
             ],
         }
+        errors = [target["error"] for target in targets.values() if target.get("error")]
 
     defaults = {
         "operation_type": values["operation_type"],
@@ -504,9 +614,9 @@ def build_excel_review_payload(
         "payment_method": values["payment_method"],
         "payment_status": values["payment_status"],
         "vat_bucket": values["vat_bucket"],
-        "treasury_workbook_path": str(treasury_path) if treasury_path else "",
-        "client_ledger_path": str(client_path) if client_path else "",
-        "supplier_ledger_path": str(supplier_path) if supplier_path else "",
+        "treasury_workbook_path": str(treasury_active_path) if treasury_active_path else "",
+        "client_ledger_path": str(client_active_path) if client_active_path else "",
+        "supplier_ledger_path": str(supplier_active_path) if supplier_active_path else "",
         "force_type": values["force_type"],
         "received_transfer_amount": values["received_transfer_amount"] or "",
     }
@@ -515,7 +625,6 @@ def build_excel_review_payload(
         "errors": errors,
         "targets": targets,
         "defaults": defaults,
-        "treasury_options": treasury_options,
     }
 
 
@@ -644,7 +753,7 @@ def write_nas_document_bundle(
                 "document_id": document_id,
                 "mapping": target_key,
                 "status": "error",
-                "error": target.get("error") or "Excel target unavailable",
+                "error": target.get("error") or target.get("message") or "Excel target unavailable",
             }
             results.append(error)
             errors.append(error)

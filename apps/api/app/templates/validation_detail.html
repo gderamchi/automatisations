@@ -25,7 +25,22 @@
           <div class="panel-head">
             <h2>Aperçu document</h2>
           </div>
-          <iframe class="preview-frame" src="{{ base_path }}/files/{{ task.document_id }}"></iframe>
+          <div class="preview-body">
+            {% if preview.preview_kind in ["pdf", "text"] %}
+            <iframe class="preview-frame {{ 'preview-frame-text' if preview.preview_kind == 'text' else '' }}" src="{{ preview.preview_url }}" title="Aperçu du document"></iframe>
+            {% elif preview.preview_kind == "image" %}
+            <img class="preview-image" src="{{ preview.preview_url }}" alt="Aperçu du document {{ preview.filename }}">
+            {% else %}
+            <div class="preview-fallback">
+              <p class="preview-fallback-title">Aperçu intégré indisponible pour ce format.</p>
+              <p class="muted">{{ preview.filename }} · {{ preview.mime_type }}</p>
+            </div>
+            {% endif %}
+          </div>
+          <div class="preview-links">
+            <a class="button secondary" href="{{ preview.preview_url }}" target="_blank" rel="noreferrer">Ouvrir</a>
+            <a class="button" href="{{ preview.download_url }}">Télécharger le document</a>
+          </div>
         </article>
 
         <article class="panel form-panel">

@@ -34,7 +34,22 @@
           <div class="panel-head">
             <h2>Aperçu document</h2>
           </div>
-          <iframe class="preview-frame" src="{{ base_path }}/files/{{ task.document_id }}"></iframe>
+          <div class="preview-body">
+            {% if preview.preview_kind in ["pdf", "text"] %}
+            <iframe class="preview-frame {{ 'preview-frame-text' if preview.preview_kind == 'text' else '' }}" src="{{ preview.preview_url }}" title="Aperçu du document"></iframe>
+            {% elif preview.preview_kind == "image" %}
+            <img class="preview-image" src="{{ preview.preview_url }}" alt="Aperçu du document {{ preview.filename }}">
+            {% else %}
+            <div class="preview-fallback">
+              <p class="preview-fallback-title">Aperçu intégré indisponible pour ce format.</p>
+              <p class="muted">{{ preview.filename }} · {{ preview.mime_type }}</p>
+            </div>
+            {% endif %}
+          </div>
+          <div class="preview-links">
+            <a class="button secondary" href="{{ preview.preview_url }}" target="_blank" rel="noreferrer">Ouvrir</a>
+            <a class="button" href="{{ preview.download_url }}">Télécharger le document</a>
+          </div>
         </article>
 
         <article class="panel form-panel">
@@ -42,6 +57,9 @@
           {% set document = task.document_payload %}
           {% set review = task.excel_review %}
           {% set options = task.excel_form_options %}
+          {% set treasury_target = review.targets["treasury"] if review.enabled else None %}
+          {% set client_target = review.targets["client"] if review.enabled else None %}
+          {% set supplier_target = review.targets["supplier"] if review.enabled else None %}
 
           <div class="summary-card">
             <div class="summary-row">
@@ -206,23 +224,60 @@
                 Virement reçu
                 <input type="number" step="0.01" name="received_transfer_amount" value="{{ payload.received_transfer_amount or review.defaults.received_transfer_amount or '' }}">
               </label>
+              {% if review.enabled %}
               <label class="field-span">
                 Classeur trésorerie
                 <select name="treasury_workbook_path">
                   <option value="">Choisir un fichier</option>
-                  {% for option in review.treasury_options %}
-                  <option value="{{ option.value }}" {{ "selected" if (payload.treasury_workbook_path or review.defaults.treasury_workbook_path) == option.value else "" }}>{{ option.label }}</option>
+                  {% for option in treasury_target.options %}
+                  <option value="{{ option.value }}" {{ "selected" if treasury_target.selected_value == option.value else "" }}>{{ option.label }}</option>
                   {% endfor %}
                 </select>
+                <span class="field-hint">{{ treasury_target.message }}</span>
               </label>
-              <label class="field-span">
-                Grand livre client
-                <input type="text" name="client_ledger_path" value="{{ payload.client_ledger_path or review.defaults.client_ledger_path or '' }}">
-              </label>
-              <label class="field-span">
-                Grand livre fournisseur
-                <input type="text" name="supplier_ledger_path" value="{{ payload.supplier_ledger_path or review.defaults.supplier_ledger_path or '' }}">
-              </label>
+              <div class="field-span stacked-field">
+                <label>
+                  Grand livre client
+                  <select name="client_ledger_path_selected">
+                    <option value="">Choisir un fichier</option>
+                    {% for option in client_target.options %}
+                    <option value="{{ option.value }}" {{ "selected" if client_target.selected_value == option.value else "" }}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                  <span class="field-hint">{{ client_target.message }}</span>
+                </label>
+                <details class="manual-entry">
+                  <summary>Saisie manuelle</summary>
+                  <label>
+                    Chemin manuel client
+                    <input type="text" name="client_ledger_path_manual" placeholder="Chemin .xlsx alternatif">
+                  </label>
+                </details>
+              </div>
+              <div class="field-span stacked-field">
+                <label>
+                  Grand livre fournisseur
+                  <select name="supplier_ledger_path_selected">
+                    <option value="">Choisir un fichier</option>
+                    {% for option in supplier_target.options %}
+                    <option value="{{ option.value }}" {{ "selected" if supplier_target.selected_value == option.value else "" }}>{{ option.label }}</option>
+                    {% endfor %}
+                  </select>
+                  <span class="field-hint">{{ supplier_target.message }}</span>
+                </label>
+                <details class="manual-entry">
+                  <summary>Saisie manuelle</summary>
+                  <label>
+                    Chemin manuel fournisseur
+                    <input type="text" name="supplier_ledger_path_manual" placeholder="Chemin .xlsx alternatif">
+                  </label>
+                </details>
+              </div>
+              {% else %}
+              <div class="field-span panel-subsection">
+                <p class="muted">Le mode Excel NAS n'est pas configuré dans cet environnement.</p>
+              </div>
+              {% endif %}
             </div>
 
             <details class="tech-details" open>
@@ -230,14 +285,16 @@
               {% if review.enabled %}
               <div class="excel-preview-grid">
                 {% for target in review.targets.values() %}
-                <section class="excel-target {{ 'excel-target-error' if target.status != 'ready' else '' }}">
+                {% set badge_class = 'badge-success' if target.status == 'ready' else 'badge-info' if target.status == 'needs_selection' else 'badge-danger' %}
+                {% set status_label = 'Prêt' if target.status == 'ready' else 'À choisir' if target.status == 'needs_selection' else 'Manquant' %}
+                <section class="excel-target {{ 'excel-target-warning' if target.status == 'needs_selection' else 'excel-target-error' if target.status == 'missing' else '' }}">
                   <div class="excel-target-head">
                     <h3>{{ target.label }}</h3>
-                    <span class="badge {{ 'badge-danger' if target.status != 'ready' else 'badge-success' }}">{{ target.status }}</span>
+                    <span class="badge {{ badge_class }}">{{ status_label }}</span>
                   </div>
-                  <p class="excel-target-path">{{ target.path or "Aucun fichier sélectionné" }}</p>
-                  {% if target.error %}
-                  <p class="muted">{{ target.error }}</p>
+                  <p class="excel-target-path">{{ target.path or target.message }}</p>
+                  {% if target.message and target.path %}
+                  <p class="muted">{{ target.message }}</p>
                   {% endif %}
                   <div class="excel-kv-list">
                     {% for header, value in target["values"] %}
