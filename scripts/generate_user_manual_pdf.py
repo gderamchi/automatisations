@@ -4,6 +4,7 @@ import html
 import re
 from pathlib import Path
 
+from reportlab import rl_config
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
@@ -26,6 +27,8 @@ from reportlab.platypus import (
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "manuel-utilisateur-automatisation.md"
 OUTPUT = ROOT / "output" / "pdf" / "manuel-utilisateur-automatisation.pdf"
+
+rl_config.invariant = True
 
 PAGE_WIDTH, PAGE_HEIGHT = A4
 MARGIN_X = 18 * mm
