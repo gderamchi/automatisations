@@ -307,6 +307,10 @@ def quick_reference_table() -> Table:
             Paragraph("Excel indique <b>Manquant</b>.", STYLES["normal"]),
             paragraph("Ne pas forcer. Signaler le blocage avec le nom du document.", "normal"),
         ],
+        [
+            paragraph("Je cherche l'original recu.", "normal"),
+            paragraph("File Station > Professionnel_CCM > 12_AUTOMATISATION > documents > archive > originals.", "normal"),
+        ],
     ]
     table = Table(data, colWidths=[58 * mm, 96 * mm], hAlign="CENTER")
     table.setStyle(

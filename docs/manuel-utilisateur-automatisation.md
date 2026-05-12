@@ -17,6 +17,52 @@ Objectif : comprendre comment envoyer, verifier, corriger et valider les documen
 - Vous confirmez le chantier, la nature du document et les choix Excel.
 - Apres validation, le systeme classe le document, ecrit dans les classeurs Excel et envoie vers InterFast si ce mode est active.
 
+## Chemins utiles sur le NAS
+
+Chemins confirmes sur le NAS le 12 mai 2026.
+
+Dans DSM / File Station, le dossier client a ouvrir est :
+
+```text
+Professionnel_CCM > 12_AUTOMATISATION > documents
+```
+
+Le chemin technique complet est :
+
+```text
+/volume1/Professionnel_CCM/12_AUTOMATISATION/documents
+```
+
+Si vous cherchez le document original recu par email ou depose manuellement, ouvrez :
+
+```text
+/volume1/Professionnel_CCM/12_AUTOMATISATION/documents/archive/originals/AAAA/MM/JJ
+```
+
+Exemple de logique : un document recu le 19 avril 2026 est range dans `archive/originals/2026/04/19`.
+
+Le nom du fichier original est renomme par le systeme pour eviter les doublons :
+
+```text
+AAAAMMJJTHHMMSSZ_nom-du-fichier_hash.extension
+```
+
+Les autres dossiers utiles :
+
+- `archive/normalized` : donnees OCR normalisees en JSON, utiles surtout pour l'administrateur.
+- `classified/standard` : copie classee du document apres validation finale.
+- `classified/accounting` : copie utilisee pour le suivi comptable.
+- `classified/worksites/<chantier>` : copie rangee par chantier apres validation finale.
+
+Quand les fichiers apparaissent :
+
+- des la reception traitee, l'original est copie dans `archive/originals/AAAA/MM/JJ` ;
+- apres **Confirmer et ecrire dans Excel**, les copies classees apparaissent dans `classified/*` ;
+- si le document est rejete, l'original reste dans `archive/originals`, mais il n'y a normalement pas de copie classee ;
+- si le document est un doublon exact, le systeme reutilise le document deja connu au lieu de creer une nouvelle copie originale.
+
+> **Important :** les chemins qui commencent par `/data` sont les chemins internes Docker. Pour un utilisateur dans File Station, utilisez le chemin DSM `Professionnel_CCM > 12_AUTOMATISATION > documents`.
+
 ## 1. Ce que fait l'automatisation
 
 L'automatisation sert a reduire le traitement manuel des documents comptables et chantier.
@@ -24,7 +70,7 @@ L'automatisation sert a reduire le traitement manuel des documents comptables et
 Elle peut :
 
 - surveiller une boite email et recuperer les nouveaux messages avec pieces jointes ;
-- archiver le document original ;
+- archiver le document original dans `archive/originals/AAAA/MM/JJ` ;
 - lire le contenu du document avec OCR ;
 - detecter fournisseur, numero de facture, date, montants et reference chantier ;
 - demander une validation humaine si une donnee est incertaine ;
@@ -181,7 +227,7 @@ Quand tout est correct, cliquez sur **Confirmer et ecrire dans Excel**.
 Cette action peut declencher :
 
 - l'ecriture dans les classeurs Excel ;
-- la copie du document dans les dossiers NAS ;
+- la copie du document dans `classified/standard`, `classified/accounting` et `classified/worksites/<chantier>` ;
 - le rattachement ou l'envoi vers InterFast selon le mode actif ;
 - la mise a jour du dashboard.
 
@@ -259,6 +305,12 @@ Le systeme a reconnu un doublon. Il n'y a normalement rien a refaire.
 
 Le document peut avoir ete classe dans le NAS et ecrit dans Excel, meme si InterFast bloque. Signalez le statut exact affiche sur la page pour verifier le rattachement InterFast.
 
+Pour verifier le classement cote NAS, regardez d'abord :
+
+```text
+Professionnel_CCM > 12_AUTOMATISATION > documents > classified
+```
+
 ## 11. Bonnes pratiques
 
 - Envoyez des fichiers lisibles et complets.
@@ -297,7 +349,7 @@ Avec ces elements, l'administrateur peut retrouver le document beaucoup plus vit
 - **Validation** : verification humaine des informations lues par OCR.
 - **Routage** : choix du chantier, du classement et des cibles Excel/InterFast.
 - **Dispatch** : execution finale apres validation, avec copie de fichiers et ecritures.
-- **NAS** : espace de stockage partage ou les documents sont classes.
+- **NAS** : espace de stockage partage. Dans ce projet, les documents client sont dans `Professionnel_CCM > 12_AUTOMATISATION > documents`.
 - **InterFast** : outil metier externe dans lequel certains documents peuvent etre rattaches.
 - **Inexweb** : format ou destination d'export comptable selon la configuration.
 - **DOE** : dossier d'ouvrage ou dossier chantier avec les pieces attendues.
