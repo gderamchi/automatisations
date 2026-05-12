@@ -13,6 +13,12 @@ Le repo inclut un worker local `Gmail -> OCR -> routing review -> dispatch` qui 
 - `config`: contrats JSON, mappings Excel, templates comptables et règles d'exemple.
 - `docs`: architecture, déploiement, checklist client et runbooks.
 
+## Documentation client
+
+- Manuel utilisateur non technique: [docs/manuel-utilisateur-automatisation.md](docs/manuel-utilisateur-automatisation.md)
+- PDF livrable client: [output/pdf/manuel-utilisateur-automatisation.pdf](output/pdf/manuel-utilisateur-automatisation.pdf)
+- Regeneration du PDF: `python3 scripts/generate_user_manual_pdf.py`
+
 ## Démarrage local
 
 ```bash
