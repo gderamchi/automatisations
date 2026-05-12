@@ -13,7 +13,7 @@ dependencies = [
   "uvicorn[standard]>=0.35,<0.36",
   "jinja2>=3.1,<3.2",
   "httpx>=0.28,<0.29",
-  "mistralai==2.0.0",
+  "mistralai @ git+https://github.com/mistralai/client-python.git@f5e990830e34cb50adcd59ddb7373d1270ff50e0",
   "openpyxl>=3.1,<3.2",
   "rapidfuzz>=3.14,<3.15",
   "pydantic>=2.11,<2.12",
