@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Any
 
 from apps.workers.accounting.entries import generate_entries_for_document
@@ -11,6 +12,7 @@ from apps.workers.common.database import init_db
 from apps.workers.common.settings import get_settings
 from apps.workers.documents.excel import write_document_to_excel
 from apps.workers.documents.ingest import ingest_document
+from apps.workers.documents.naming import audit_path_for_ccm_naming
 from apps.workers.documents.ocr_service import run_document_ocr
 from apps.workers.doe.service import rebuild_project_tree
 from apps.workers.exports.inexweb import export_inexweb
@@ -68,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch = subparsers.add_parser("dispatch-document")
     dispatch.add_argument("--document-id", type=int, required=True)
 
+    audit_naming = subparsers.add_parser("audit-naming")
+    audit_naming.add_argument("--root", required=True)
+    audit_naming.add_argument("--output-path")
+
     subparsers.add_parser("weekly-accounting")
 
     return parser
@@ -109,6 +115,14 @@ def main() -> None:
         _print(ensure_routing_task(args.document_id, force_refresh=True, settings=settings))
     elif args.command == "dispatch-document":
         _print(dispatch_document(args.document_id, settings=settings))
+    elif args.command == "audit-naming":
+        report = audit_path_for_ccm_naming(Path(args.root), settings=settings)
+        if args.output_path:
+            output_path = Path(args.output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            report["output_path"] = str(output_path)
+        _print(report)
     elif args.command == "weekly-accounting":
         _print(send_weekly_accounting_email(settings=settings))
     else:

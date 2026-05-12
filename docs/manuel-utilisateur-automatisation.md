@@ -167,7 +167,7 @@ Statuts utiles :
 
 - **A verifier** : vous devez controler les informations lues ;
 - **Chantier a confirmer** : vous devez confirmer le classement ;
-- **Valide** : la validation est faite, mais le traitement final peut encore etre en cours ;
+- **OCR OK** : les donnees lues sont acceptees, le classement final peut encore attendre ;
 - **Classe** : le document est alle au bout du processus ;
 - **Rejete** : le document a ete refuse.
 
@@ -181,6 +181,9 @@ A droite : les informations detectees par OCR.
 
 Controlez en priorite :
 
+- le **Type document CCM** ;
+- la **Categorie** ;
+- la **Sous-categorie** ;
 - le fournisseur ;
 - le numero de facture ;
 - la date de facture ;
@@ -189,7 +192,11 @@ Controlez en priorite :
 - le montant TTC ;
 - la reference chantier.
 
-Si une donnee est fausse, corrigez directement le champ avant de valider.
+Les champs **Type document CCM**, **Categorie** et **Sous-categorie** sont des listes verrouillees. Il faut choisir une valeur de la regle de nommage CCM; il n'est pas possible d'inventer une nouvelle categorie depuis l'ecran.
+
+Le champ **Nom officiel** affiche un apercu readonly du nom qui sera utilise au classement final.
+
+Si une donnee libre est fausse, corrigez directement le champ avant de valider.
 
 Boutons disponibles :
 
@@ -205,12 +212,15 @@ Apres validation OCR, l'automatisation propose comment classer le document.
 
 Vous devez verifier :
 
-- la nature du document, par exemple facture, devis, avoir ou recu ;
-- le type de fourniture, par exemple materiel, carburant, hotel, repas, peage ou consommable ;
+- le **Type document CCM** ;
+- la **Categorie** ;
+- la **Sous-categorie** ;
 - le chantier selectionne ;
 - le nom de depense ;
 - les informations fournisseur, facture, date et montants ;
 - les choix comptables et Excel proposes.
+
+Les listes CCM sont les seules valeurs acceptees. Si une categorie ou sous-categorie manque, elle doit etre ajoutee dans le catalogue versionne par l'administrateur, pas tapee manuellement par un salarie.
 
 Le champ **Chantier** est important. Si le mauvais chantier est selectionne, choisissez le bon dans la liste avant de continuer.
 
@@ -227,9 +237,11 @@ Quand tout est correct, cliquez sur **Confirmer et ecrire dans Excel**.
 Cette action peut declencher :
 
 - l'ecriture dans les classeurs Excel ;
-- la copie du document dans `classified/standard`, `classified/accounting` et `classified/worksites/<chantier>` ;
+- la copie du document, avec son nom officiel CCM, dans `archive/originals`, `classified/standard`, `classified/accounting` et `classified/worksites/<chantier>` ;
 - le rattachement ou l'envoi vers InterFast selon le mode actif ;
 - la mise a jour du dashboard.
+
+Le systeme ne classe pas dans `classified/*` tant que les listes CCM et le chantier requis ne sont pas valides.
 
 ## 8. Que se passe-t-il apres validation finale
 

@@ -29,16 +29,22 @@ def test_internal_ingest_and_validation_flow(client, tmp_path, test_settings, in
     page = client.get(f"/validate/{validation_token}", auth=("validator", "secret"))
     assert page.status_code == 200
     assert "Validation humaine" in page.text
+    assert 'name="ccm_type"' in page.text
+    assert 'name="ccm_category"' in page.text
+    assert 'name="ccm_subcategory"' in page.text
+    assert 'name="document_kind"' not in page.text
+    assert 'name="supply_type"' not in page.text
 
     submit = client.post(
         f"/validate/{validation_token}",
         auth=("validator", "secret"),
         data={
             "document_type": "purchase_invoice",
-            "document_kind": "invoice",
             "decision": "approve",
             "validator_name": "ops",
-            "supply_type": "materiel",
+            "ccm_type": "FACTURE",
+            "ccm_category": "FOURNITURES",
+            "ccm_subcategory": "MATERIEL",
             "supplier_name": "Fournisseur Test",
             "supplier_siret": "12345678912345",
             "invoice_number": "FAC-2026-999",
@@ -73,6 +79,13 @@ def test_internal_ingest_and_validation_flow(client, tmp_path, test_settings, in
     assert 'name="worksite_external_id"' in routing_page.text
     assert 'name="expense_label"' in routing_page.text
     assert 'name="gross_amount"' in routing_page.text
+    assert 'name="ccm_type"' in routing_page.text
+    assert 'name="ccm_category"' in routing_page.text
+    assert 'name="ccm_subcategory"' in routing_page.text
+    assert 'name="document_kind"' not in routing_page.text
+    assert 'name="supply_type"' not in routing_page.text
+
+    expected_final_filename = "2026-03-10_FACTURE_FOURNISSEUR_TEST_FAC_2026_999-MATERIEL_CCM2026_002.txt"
 
     routing_submit = client.post(
         f"/route/{routing_token}",
@@ -80,10 +93,12 @@ def test_internal_ingest_and_validation_flow(client, tmp_path, test_settings, in
         data={
             "decision": "approve",
             "validator_name": "ops",
-            "document_kind": "invoice",
-            "supply_type": "materiel",
+            "ccm_type": "FACTURE",
+            "ccm_category": "FOURNITURES",
+            "ccm_subcategory": "MATERIEL",
+            "ccm_refdoc": "FAC-2026-999",
+            "ccm_chantier": "CCM2026-002",
             "expense_label": "Achat de matériel Fournisseur Test",
-            "final_filename": "2026-03-10_INVOICE_FOURNISSEUR_TEST_MATERIEL_PROJET_X_1200.00.pdf",
             "routing_confidence": "0.94",
             "supplier_name": "Fournisseur Test",
             "invoice_number": "FAC-2026-999",
@@ -93,24 +108,98 @@ def test_internal_ingest_and_validation_flow(client, tmp_path, test_settings, in
             "vat_amount": "200.00",
             "gross_amount": "1200.00",
             "worksite_external_id": "53032",
-            "standard_path": str(test_settings.classified_standard_dir / "2026-03-10_INVOICE_FOURNISSEUR_TEST_MATERIEL_PROJET_X_1200.00.pdf"),
-            "accounting_path": str(test_settings.classified_accounting_dir / "2026-03-10_INVOICE_FOURNISSEUR_TEST_MATERIEL_PROJET_X_1200.00.pdf"),
-            "worksite_path": str(test_settings.classified_worksites_dir / "projet-x" / "2026-03-10_INVOICE_FOURNISSEUR_TEST_MATERIEL_PROJET_X_1200.00.pdf"),
         },
     )
     assert routing_submit.status_code == 200
     assert "Dispatch: dispatched" in routing_submit.text
     assert "Excel: 1 erreur(s) non bloquante(s)" in routing_submit.text
-    assert (test_settings.classified_standard_dir / "2026-03-10_INVOICE_FOURNISSEUR_TEST_MATERIEL_PROJET_X_1200.00.pdf").exists()
+    assert (test_settings.classified_standard_dir / expected_final_filename).exists()
     with get_connection(test_settings) as connection:
         updated = connection.execute(
-            "SELECT project_ref, client_external_id, worksite_external_id, gross_amount FROM documents WHERE id = ?",
+            "SELECT project_ref, client_external_id, worksite_external_id, gross_amount, final_filename, ccm_type, ccm_category, ccm_subcategory FROM documents WHERE id = ?",
             (document_id,),
         ).fetchone()
     assert updated["project_ref"] == "12576-6-RONDEAU - CCM2026-002"
     assert updated["client_external_id"] == "1950319"
     assert updated["worksite_external_id"] == "53032"
     assert updated["gross_amount"] == "1200.00"
+    assert updated["final_filename"] == expected_final_filename
+    assert updated["ccm_type"] == "FACTURE"
+    assert updated["ccm_category"] == "FOURNITURES"
+    assert updated["ccm_subcategory"] == "MATERIEL"
+
+
+def test_validation_rejects_direct_post_with_invented_ccm_values(client, tmp_path, incomplete_invoice_text):
+    invoice = tmp_path / "invoice-bidon.txt"
+    invoice.write_text(incomplete_invoice_text, encoding="utf-8")
+
+    ingest = client.post(
+        "/internal/documents/ingest",
+        headers={"X-Internal-Token": "test-token"},
+        json={"source_path": str(invoice), "source_kind": "manual"},
+    )
+    document_id = ingest.json()["document_id"]
+    ocr = client.post(
+        f"/internal/documents/{document_id}/ocr",
+        headers={"X-Internal-Token": "test-token"},
+    )
+    validation_token = ocr.json()["validation_token"]
+
+    submit = client.post(
+        f"/validate/{validation_token}",
+        auth=("validator", "secret"),
+        data={
+            "document_type": "purchase_invoice",
+            "decision": "approve",
+            "ccm_type": "BIDON",
+            "ccm_category": "DIVERS",
+            "ccm_subcategory": "AUTRE",
+            "supplier_name": "Fournisseur Test",
+            "invoice_number": "FAC-2026-999",
+            "invoice_date": "2026-03-10",
+            "currency": "EUR",
+            "gross_amount": "1200.00",
+        },
+    )
+
+    assert submit.status_code == 400
+
+
+def test_validation_rejects_direct_post_with_invented_legacy_document_kind(client, tmp_path, incomplete_invoice_text):
+    invoice = tmp_path / "invoice-kind-bidon.txt"
+    invoice.write_text(incomplete_invoice_text, encoding="utf-8")
+
+    ingest = client.post(
+        "/internal/documents/ingest",
+        headers={"X-Internal-Token": "test-token"},
+        json={"source_path": str(invoice), "source_kind": "manual"},
+    )
+    document_id = ingest.json()["document_id"]
+    ocr = client.post(
+        f"/internal/documents/{document_id}/ocr",
+        headers={"X-Internal-Token": "test-token"},
+    )
+    validation_token = ocr.json()["validation_token"]
+
+    submit = client.post(
+        f"/validate/{validation_token}",
+        auth=("validator", "secret"),
+        data={
+            "document_type": "purchase_invoice",
+            "document_kind": "bidon",
+            "decision": "approve",
+            "ccm_type": "FACTURE",
+            "ccm_category": "FOURNITURES",
+            "ccm_subcategory": "MATERIEL",
+            "supplier_name": "Fournisseur Test",
+            "invoice_number": "FAC-2026-999",
+            "invoice_date": "2026-03-10",
+            "currency": "EUR",
+            "gross_amount": "1200.00",
+        },
+    )
+
+    assert submit.status_code == 400
 
 
 def test_dashboard_requires_basic_auth(client):

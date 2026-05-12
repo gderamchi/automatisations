@@ -25,18 +25,18 @@
             {% endif %}
           </div>
           <div>
-            {% if doc.current_stage == 'dispatched' %}
+            {% if doc.status_label == 'Classé' %}
             <span class="badge badge-success">Classé</span>
-            {% elif doc.current_stage == 'routed' %}
-            <span class="badge badge-success">Validé</span>
-            {% elif doc.validation_task_status == 'pending' %}
-            <span class="badge badge-danger">A vérifier</span>
-            {% elif doc.routing_task_status == 'pending' %}
+            {% elif doc.status_label == 'OCR OK' %}
+            <span class="badge badge-info">OCR OK</span>
+            {% elif doc.status_label == 'À vérifier' %}
+            <span class="badge badge-danger">À vérifier</span>
+            {% elif doc.status_label == 'Chantier à confirmer' %}
             <span class="badge badge-danger">Chantier à confirmer</span>
             {% elif doc.current_stage == 'rejected' or doc.current_stage == 'routing_rejected' %}
             <span class="badge badge-danger">Rejeté</span>
             {% else %}
-            <span class="badge badge-info">En cours</span>
+            <span class="badge badge-info">Reçu</span>
             {% endif %}
           </div>
         </div>
@@ -51,8 +51,11 @@
           {% if doc.project_ref %}
           <span>Chantier : {{ doc.project_ref }}</span>
           {% endif %}
-          {% if doc.document_kind and doc.document_kind != 'unknown' %}
-          <span>{{ doc.document_kind }}</span>
+          {% if doc.ccm_type %}
+          <span>{{ doc.ccm_type }}</span>
+          {% endif %}
+          {% if doc.ccm_category %}
+          <span>{{ doc.ccm_category }}{% if doc.ccm_subcategory %} · {{ doc.ccm_subcategory }}{% endif %}</span>
           {% endif %}
         </div>
 

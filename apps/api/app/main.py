@@ -18,6 +18,16 @@ from apps.workers.common.database import get_connection, init_db
 from apps.workers.common.schemas import BankImportRequest, ExportRequest, IngestRequest, InterfastSyncRequest, OcrRunResponse, OCRNormalized, RoutingDecision, RoutingProposal, ValidationDecision
 from apps.workers.common.settings import Settings, ensure_runtime_directories, get_settings
 from apps.workers.documents.ingest import ingest_document
+from apps.workers.documents.naming import (
+    NamingValidationError,
+    ccm_category_to_legacy_supply,
+    ccm_type_to_legacy_kind,
+    infer_ccm_fields,
+    load_ccm_catalog,
+    validate_ccm_fields,
+    validate_legacy_document_kind,
+    validate_legacy_supply_type,
+)
 from apps.workers.documents.ocr_service import run_document_ocr
 from apps.workers.documents.excel import write_document_to_excel
 from apps.workers.documents.validation import apply_validation, get_document_file_path, get_validation_task, list_pending_validation_tasks
@@ -92,11 +102,46 @@ def _build_document_preview(document_id: int, settings: Settings) -> dict[str, s
     }
 
 
+def _ccm_catalog_context(settings: Settings) -> dict[str, object]:
+    catalog = load_ccm_catalog(settings)
+    return {
+        "version": catalog.version,
+        "format": catalog.format,
+        "types": catalog.types,
+        "categories": catalog.categories,
+    }
+
+
+def _enrich_validation_payloads_with_ccm(task: dict) -> None:
+    for payload_key in ("extracted_payload", "corrected_payload"):
+        payload = task.get(payload_key)
+        if not isinstance(payload, dict):
+            continue
+        inferred = infer_ccm_fields(payload, source_name=task.get("source_name"))
+        for key, value in inferred.items():
+            if key.startswith("ccm_") and not payload.get(key) and value:
+                payload[key] = value
+
+
+def _document_status_label(document: dict) -> str:
+    if document.get("current_stage") in {"dispatched", "excel_written"}:
+        return "Classé"
+    if document.get("routing_task_status") == "pending" or document.get("current_stage") in {"needs_routing", "needs_routing_fix", "routed", "dispatch_blocked", "dispatch_failed"}:
+        return "Chantier à confirmer"
+    if document.get("validation_task_status") == "pending" or document.get("validation_status") == "pending":
+        return "À vérifier"
+    if document.get("validation_status") == "approved":
+        return "OCR OK"
+    return "Reçu"
+
+
 def _task_template_context(task: dict, settings: Settings, **extra: object) -> dict[str, object]:
+    _enrich_validation_payloads_with_ccm(task)
     context: dict[str, object] = {
         "task": task,
         "preview": _build_document_preview(task["document_id"], settings),
         "base_path": _template_base_path(settings),
+        "ccm_catalog": _ccm_catalog_context(settings),
     }
     context.update(extra)
     return context
@@ -107,6 +152,12 @@ def _build_corrected_payload(
     document_type: str,
     document_kind: str | None,
     supply_type: str | None,
+    ccm_type: str | None,
+    ccm_category: str | None,
+    ccm_subcategory: str | None,
+    ccm_refdoc: str | None,
+    ccm_refclient: str | None,
+    ccm_chantier: str | None,
     supplier_name: str | None,
     supplier_siret: str | None,
     invoice_number: str | None,
@@ -117,13 +168,46 @@ def _build_corrected_payload(
     vat_amount: str | None,
     gross_amount: str | None,
     project_ref: str | None,
+    settings: Settings,
 ) -> OCRNormalized:
+    validate_legacy_document_kind(document_kind)
+    validate_legacy_supply_type(supply_type)
     payload = dict(extracted_payload)
+    inferred = infer_ccm_fields(
+        payload
+        | {
+            "document_kind": document_kind or payload.get("document_kind"),
+            "supply_type": supply_type or payload.get("supply_type"),
+            "supplier_name": supplier_name or payload.get("supplier_name"),
+            "invoice_number": invoice_number or payload.get("invoice_number"),
+            "invoice_date": invoice_date or payload.get("invoice_date"),
+            "project_ref": project_ref or payload.get("project_ref"),
+        }
+    )
+    ccm_fields = validate_ccm_fields(
+        {
+            "ccm_type": ccm_type or payload.get("ccm_type") or inferred.get("ccm_type"),
+            "ccm_category": ccm_category or payload.get("ccm_category") or inferred.get("ccm_category"),
+            "ccm_subcategory": ccm_subcategory or payload.get("ccm_subcategory") or inferred.get("ccm_subcategory"),
+            "ccm_nom": supplier_name or payload.get("supplier_name"),
+            "ccm_refdoc": ccm_refdoc or invoice_number or payload.get("invoice_number"),
+            "ccm_refclient": ccm_refclient or payload.get("ccm_refclient"),
+            "ccm_chantier": ccm_chantier or project_ref or payload.get("project_ref"),
+            "invoice_date": invoice_date or payload.get("invoice_date"),
+        },
+        load_ccm_catalog(settings),
+    )
     payload.update(
         {
             "document_type": document_type,
-            "document_kind": document_kind or payload.get("document_kind"),
-            "supply_type": supply_type or payload.get("supply_type"),
+            "document_kind": ccm_type_to_legacy_kind(ccm_fields["ccm_type"]),
+            "supply_type": ccm_category_to_legacy_supply(ccm_fields["ccm_category"], ccm_fields["ccm_subcategory"]),
+            "ccm_type": ccm_fields["ccm_type"],
+            "ccm_category": ccm_fields["ccm_category"],
+            "ccm_subcategory": ccm_fields["ccm_subcategory"],
+            "ccm_refdoc": ccm_fields["ccm_refdoc"],
+            "ccm_refclient": ccm_fields["ccm_refclient"],
+            "ccm_chantier": ccm_fields["ccm_chantier"],
             "supplier_name": supplier_name,
             "supplier_siret": supplier_siret,
             "invoice_number": invoice_number,
@@ -143,6 +227,12 @@ def _build_routing_payload(
     proposed_payload: dict,
     document_kind: str | None,
     supply_type: str | None,
+    ccm_type: str | None,
+    ccm_category: str | None,
+    ccm_subcategory: str | None,
+    ccm_refdoc: str | None,
+    ccm_refclient: str | None,
+    ccm_chantier: str | None,
     expense_label: str | None,
     final_filename: str | None,
     routing_confidence: str | None,
@@ -165,14 +255,49 @@ def _build_routing_payload(
     supplier_ledger_path: str | None,
     force_type: str | None,
     received_transfer_amount: str | None,
+    settings: Settings,
+    document_payload: dict | None = None,
 ) -> RoutingProposal:
+    validate_legacy_document_kind(document_kind)
+    validate_legacy_supply_type(supply_type)
     payload = dict(proposed_payload)
+    source_document = document_payload or {}
+    inferred = infer_ccm_fields(
+        payload
+        | {
+            "document_kind": document_kind or payload.get("document_kind"),
+            "supply_type": supply_type or payload.get("supply_type"),
+            "supplier_name": source_document.get("supplier_name") or payload.get("supplier_name"),
+            "invoice_number": source_document.get("invoice_number") or payload.get("invoice_number"),
+            "invoice_date": source_document.get("invoice_date") or payload.get("invoice_date"),
+            "project_ref": target_label or source_document.get("project_ref") or payload.get("project_ref"),
+        }
+    )
+    ccm_fields = validate_ccm_fields(
+        {
+            "ccm_type": ccm_type or payload.get("ccm_type") or inferred.get("ccm_type"),
+            "ccm_category": ccm_category or payload.get("ccm_category") or inferred.get("ccm_category"),
+            "ccm_subcategory": ccm_subcategory or payload.get("ccm_subcategory") or inferred.get("ccm_subcategory"),
+            "ccm_nom": source_document.get("supplier_name") or payload.get("supplier_name"),
+            "ccm_refdoc": ccm_refdoc or source_document.get("invoice_number") or payload.get("ccm_refdoc"),
+            "ccm_refclient": ccm_refclient or payload.get("ccm_refclient"),
+            "ccm_chantier": ccm_chantier or target_label or source_document.get("project_ref") or payload.get("ccm_chantier"),
+            "invoice_date": source_document.get("invoice_date") or payload.get("invoice_date"),
+        },
+        load_ccm_catalog(settings),
+    )
     payload.update(
         {
-            "document_kind": document_kind or payload.get("document_kind") or "unknown",
-            "supply_type": supply_type or payload.get("supply_type") or "unknown",
+            "document_kind": ccm_type_to_legacy_kind(ccm_fields["ccm_type"]),
+            "supply_type": ccm_category_to_legacy_supply(ccm_fields["ccm_category"], ccm_fields["ccm_subcategory"]),
+            "ccm_type": ccm_fields["ccm_type"],
+            "ccm_category": ccm_fields["ccm_category"],
+            "ccm_subcategory": ccm_fields["ccm_subcategory"],
+            "ccm_refdoc": ccm_fields["ccm_refdoc"],
+            "ccm_refclient": ccm_fields["ccm_refclient"],
+            "ccm_chantier": ccm_fields["ccm_chantier"],
             "expense_label": expense_label or payload.get("expense_label"),
-            "final_filename": final_filename or payload.get("final_filename"),
+            "final_filename": None,
             "routing_confidence": float(routing_confidence) if routing_confidence else float(payload.get("routing_confidence") or 0),
             "client_external_id": client_external_id or payload.get("client_external_id"),
             "worksite_external_id": worksite_external_id or payload.get("worksite_external_id"),
@@ -271,6 +396,7 @@ async def dashboard(
             for row in connection.execute(
                 """
                 SELECT id, source_name, supplier_name, gross_amount, document_kind, supply_type,
+                       ccm_type, ccm_category, ccm_subcategory,
                        project_ref, worksite_external_id, current_stage, routing_confidence, updated_at
                 FROM documents
                 WHERE current_stage IN ('dispatched', 'dispatch_blocked', 'dispatch_failed', 'routed')
@@ -279,13 +405,21 @@ async def dashboard(
                 """
             ).fetchall()
         ]
+    for doc in recent_documents:
+        doc["status_label"] = _document_status_label(doc)
+    pending_tasks = list_pending_validation_tasks(settings)
+    for task in pending_tasks:
+        task["status_label"] = "À vérifier"
+    pending_routing_tasks = list_pending_routing_tasks(settings)
+    for task in pending_routing_tasks:
+        task["status_label"] = "Chantier à confirmer"
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={
             "metrics": metrics,
-            "pending_tasks": list_pending_validation_tasks(settings),
-            "pending_routing_tasks": list_pending_routing_tasks(settings),
+            "pending_tasks": pending_tasks,
+            "pending_routing_tasks": pending_routing_tasks,
             "recent_documents": recent_documents,
             "refresh_seconds": settings.dashboard_refresh_seconds,
             "base_path": _template_base_path(settings),
@@ -333,7 +467,8 @@ async def review_batch(
             for row in connection.execute(
                 """
                 SELECT d.id, d.source_name, d.supplier_name, d.invoice_number, d.invoice_date,
-                       d.gross_amount, d.project_ref, d.document_kind, d.current_stage,
+                       d.gross_amount, d.project_ref, d.document_kind, d.ccm_type,
+                       d.ccm_category, d.ccm_subcategory, d.current_stage,
                        d.validation_status, d.confidence, d.routing_confidence,
                        d.interfast_target_type, d.interfast_target_id,
                        vt.token AS validation_token, vt.status AS validation_task_status,
@@ -359,6 +494,7 @@ async def review_batch(
             doc["interfast_link"] = f"{interfast_base}/{ui_path}" if target_type == "expense" else f"{interfast_base}/{ui_path}/{target_id}"
         else:
             doc["interfast_link"] = None
+        doc["status_label"] = _document_status_label(doc)
     return templates.TemplateResponse(
         request=request,
         name="review_batch.html",
@@ -396,6 +532,12 @@ async def submit_validation(
     validator_name: str = Form(default=""),
     notes: str = Form(default=""),
     supply_type: str | None = Form(default=None),
+    ccm_type: str | None = Form(default=None),
+    ccm_category: str | None = Form(default=None),
+    ccm_subcategory: str | None = Form(default=None),
+    ccm_refdoc: str | None = Form(default=None),
+    ccm_refclient: str | None = Form(default=None),
+    ccm_chantier: str | None = Form(default=None),
     supplier_name: str | None = Form(default=None),
     supplier_siret: str | None = Form(default=None),
     invoice_number: str | None = Form(default=None),
@@ -413,22 +555,32 @@ async def submit_validation(
         raise HTTPException(status_code=404, detail="Validation task not found")
     corrected = None
     if decision != "reject":
-        corrected = _build_corrected_payload(
-            task["corrected_payload"] or task["extracted_payload"],
-            document_type,
-            document_kind,
-            supply_type,
-            supplier_name,
-            supplier_siret,
-            invoice_number,
-            invoice_date,
-            due_date,
-            currency,
-            net_amount,
-            vat_amount,
-            gross_amount,
-            project_ref,
-        )
+        try:
+            corrected = _build_corrected_payload(
+                task["corrected_payload"] or task["extracted_payload"],
+                document_type,
+                document_kind,
+                supply_type,
+                ccm_type,
+                ccm_category,
+                ccm_subcategory,
+                ccm_refdoc,
+                ccm_refclient,
+                ccm_chantier,
+                supplier_name,
+                supplier_siret,
+                invoice_number,
+                invoice_date,
+                due_date,
+                currency,
+                net_amount,
+                vat_amount,
+                gross_amount,
+                project_ref,
+                settings,
+            )
+        except NamingValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors) from exc
     result = apply_validation(
         token,
         ValidationDecision(
@@ -472,6 +624,12 @@ async def submit_routing(
     notes: str = Form(default=""),
     document_kind: str | None = Form(default=None),
     supply_type: str | None = Form(default=None),
+    ccm_type: str | None = Form(default=None),
+    ccm_category: str | None = Form(default=None),
+    ccm_subcategory: str | None = Form(default=None),
+    ccm_refdoc: str | None = Form(default=None),
+    ccm_refclient: str | None = Form(default=None),
+    ccm_chantier: str | None = Form(default=None),
     expense_label: str | None = Form(default=None),
     final_filename: str | None = Form(default=None),
     routing_confidence: str | None = Form(default=None),
@@ -526,33 +684,44 @@ async def submit_routing(
             gross_amount,
             task["document_payload"].get("project_ref"),
         )
-        corrected = _build_routing_payload(
-            task["corrected_payload"] or task["proposed_payload"],
-            document_kind,
-            supply_type,
-            expense_label,
-            final_filename,
-            routing_confidence,
-            client_external_id,
-            worksite_external_id,
-            interfast_target_type,
-            interfast_target_id,
-            target_label,
-            standard_path,
-            accounting_path,
-            worksite_path,
-            operation_type,
-            ledger_label,
-            ledger_sub_label,
-            payment_method,
-            payment_status,
-            vat_bucket,
-            treasury_workbook_path,
-            (client_ledger_path_manual or "").strip() or (client_ledger_path_selected or "").strip() or None,
-            (supplier_ledger_path_manual or "").strip() or (supplier_ledger_path_selected or "").strip() or None,
-            force_type,
-            received_transfer_amount,
-        )
+        try:
+            corrected = _build_routing_payload(
+                task["corrected_payload"] or task["proposed_payload"],
+                document_kind,
+                supply_type,
+                ccm_type,
+                ccm_category,
+                ccm_subcategory,
+                ccm_refdoc,
+                ccm_refclient,
+                ccm_chantier,
+                expense_label,
+                final_filename,
+                routing_confidence,
+                client_external_id,
+                worksite_external_id,
+                interfast_target_type,
+                interfast_target_id,
+                target_label,
+                standard_path,
+                accounting_path,
+                worksite_path,
+                operation_type,
+                ledger_label,
+                ledger_sub_label,
+                payment_method,
+                payment_status,
+                vat_bucket,
+                treasury_workbook_path,
+                (client_ledger_path_manual or "").strip() or (client_ledger_path_selected or "").strip() or None,
+                (supplier_ledger_path_manual or "").strip() or (supplier_ledger_path_selected or "").strip() or None,
+                force_type,
+                received_transfer_amount,
+                settings,
+                document_payload=corrected_document.model_dump(mode="json"),
+            )
+        except NamingValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors) from exc
         corrected = hydrate_routing_proposal(
             task["document_id"],
             corrected,
@@ -590,7 +759,15 @@ async def submit_routing(
     )
     if corrected_document:
         project_ref = corrected.target_label if corrected else task["document_payload"].get("project_ref")
-        corrected_document_payload = corrected_document.model_dump(mode="json") | {"project_ref": project_ref}
+        corrected_document_payload = corrected_document.model_dump(mode="json") | {
+            "project_ref": project_ref,
+            "ccm_type": corrected.ccm_type if corrected else None,
+            "ccm_category": corrected.ccm_category if corrected else None,
+            "ccm_subcategory": corrected.ccm_subcategory if corrected else None,
+            "ccm_refdoc": corrected.ccm_refdoc if corrected else None,
+            "ccm_refclient": corrected.ccm_refclient if corrected else None,
+            "ccm_chantier": corrected.ccm_chantier if corrected else None,
+        }
         update_document_payload_from_routing(
             task["document_id"],
             corrected_document_payload,

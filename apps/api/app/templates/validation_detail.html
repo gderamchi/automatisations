@@ -69,18 +69,48 @@
             <div class="panel-head">
               <h2>Corriger si besoin</h2>
             </div>
+            <input type="hidden" name="document_type" value="{{ payload.document_type or 'purchase_invoice' }}">
             <div class="form-grid">
               <label>
+                Type document CCM
+                <select name="ccm_type" id="ccm_type" required>
+                  <option value="">Choisir</option>
+                  {% for type_code in ccm_catalog.types %}
+                  <option value="{{ type_code }}" {{ "selected" if payload.ccm_type == type_code else "" }}>{{ type_code }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Catégorie
+                <select name="ccm_category" id="ccm_category" required>
+                  <option value="">Choisir</option>
+                  {% for category in ccm_catalog.categories.keys() %}
+                  <option value="{{ category }}" {{ "selected" if payload.ccm_category == category else "" }}>{{ category }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Sous-catégorie
+                <select name="ccm_subcategory" id="ccm_subcategory" required>
+                  <option value="">Choisir</option>
+                  {% for category, subcategories in ccm_catalog.categories.items() %}
+                    {% for subcategory in subcategories %}
+                    <option value="{{ subcategory }}" data-category="{{ category }}" {{ "selected" if payload.ccm_subcategory == subcategory else "" }}>{{ subcategory }}</option>
+                    {% endfor %}
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
                 Fournisseur
-                <input type="text" name="supplier_name" value="{{ payload.supplier_name or '' }}">
+                <input type="text" name="supplier_name" id="supplier_name" value="{{ payload.supplier_name or '' }}">
               </label>
               <label>
                 N° facture
-                <input type="text" name="invoice_number" value="{{ payload.invoice_number or '' }}">
+                <input type="text" name="invoice_number" id="invoice_number" value="{{ payload.invoice_number or '' }}">
               </label>
               <label>
                 Date facture
-                <input type="date" name="invoice_date" value="{{ payload.invoice_date or '' }}">
+                <input type="date" name="invoice_date" id="invoice_date" value="{{ payload.invoice_date or '' }}">
               </label>
               <label>
                 Montant HT
@@ -96,25 +126,21 @@
               </label>
               <label>
                 Réf chantier
-                <input type="text" name="project_ref" value="{{ payload.project_ref or '' }}">
+                <input type="text" name="project_ref" id="ccm_chantier" value="{{ payload.ccm_chantier or payload.project_ref or '' }}">
+              </label>
+              <label>
+                Réf client
+                <input type="text" name="ccm_refclient" id="ccm_refclient" value="{{ payload.ccm_refclient or '' }}">
+              </label>
+              <label class="field-span">
+                Nom officiel
+                <input type="text" id="ccm_filename_preview" readonly>
               </label>
             </div>
 
             <details class="tech-details">
               <summary>Détails techniques</summary>
               <div class="form-grid">
-                <label>
-                  Type document
-                  <input type="text" name="document_type" value="{{ payload.document_type or 'purchase_invoice' }}">
-                </label>
-                <label>
-                  Nature document
-                  <input type="text" name="document_kind" value="{{ payload.document_kind or '' }}">
-                </label>
-                <label>
-                  Type fourniture
-                  <input type="text" name="supply_type" value="{{ payload.supply_type or '' }}">
-                </label>
                 <label>
                   SIRET
                   <input type="text" name="supplier_siret" value="{{ payload.supplier_siret or '' }}">
@@ -146,5 +172,44 @@
         </article>
       </section>
     </main>
+    <script>
+      const categorySelect = document.getElementById("ccm_category");
+      const subcategorySelect = document.getElementById("ccm_subcategory");
+      const normalizeToken = (value, fallback = "") => {
+        const raw = (value || fallback || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+        return raw.replace(/[^A-Z0-9]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+      };
+      const syncSubcategories = () => {
+        const category = categorySelect?.value || "";
+        for (const option of subcategorySelect?.options || []) {
+          if (!option.value) continue;
+          const enabled = !category || option.dataset.category === category;
+          option.hidden = !enabled;
+          option.disabled = !enabled;
+        }
+        if (subcategorySelect?.selectedOptions[0]?.disabled) subcategorySelect.value = "";
+        syncFilenamePreview();
+      };
+      const syncFilenamePreview = () => {
+        const date = document.getElementById("invoice_date")?.value || "AAAA-MM-JJ";
+        const type = document.getElementById("ccm_type")?.value || "TYPE";
+        const supplier = normalizeToken(document.getElementById("supplier_name")?.value, "NOM");
+        const refdoc = normalizeToken(document.getElementById("invoice_number")?.value, "NR") || "NR";
+        const subcategory = document.getElementById("ccm_subcategory")?.value || "SOUS-CATEGORIE";
+        const refclient = normalizeToken(document.getElementById("ccm_refclient")?.value);
+        const chantier = normalizeToken(document.getElementById("ccm_chantier")?.value);
+        const parts = [date, type, supplier, `${refdoc}-${subcategory}`];
+        if (refclient) parts.push(refclient);
+        if (chantier) parts.push(chantier);
+        const preview = document.getElementById("ccm_filename_preview");
+        if (preview) preview.value = `${parts.join("_")}.ext`;
+      };
+      for (const id of ["ccm_type", "ccm_category", "ccm_subcategory", "supplier_name", "invoice_number", "invoice_date", "ccm_refclient", "ccm_chantier"]) {
+        document.getElementById(id)?.addEventListener("input", syncFilenamePreview);
+        document.getElementById(id)?.addEventListener("change", id === "ccm_category" ? syncSubcategories : syncFilenamePreview);
+      }
+      syncSubcategories();
+      syncFilenamePreview();
+    </script>
   </body>
 </html>

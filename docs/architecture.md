@@ -11,19 +11,21 @@
 
 1. Reception
    - IMAP ou dossier NAS detecte un nouveau fichier.
-   - `POST /internal/documents/ingest` archive l'original, calcule le SHA256 et dedoublonne.
+   - `POST /internal/documents/ingest` stocke l'original en zone technique `processing/originals`, calcule le SHA256 et dedoublonne.
 2. OCR
    - `POST /internal/documents/{id}/ocr` lance Mistral OCR ou le mode mock.
    - Le worker normalise vers le contrat `ocr_normalized` et archive le JSON.
    - Si confiance insuffisante, une tache de validation est creee.
 3. Validation
    - L'utilisateur ouvre `/validate/{token}`.
+   - Les champs de nommage CCM (`Type document`, `Categorie`, `Sous-categorie`) sont verrouilles par le catalogue `config/document_naming/ccm_v1.json`.
    - La decision met a jour la source canonique dans `documents` et `validation_tasks`.
 4. Routage
    - `POST /internal/documents/{id}/route` construit la proposition chantier, classement et cible InterFast.
-   - L'utilisateur ouvre `/route/{token}` puis valide le dispatch.
+   - L'utilisateur ouvre `/route/{token}` puis valide le dispatch avec les listes CCM et le chantier.
 5. Dispatch
-   - Copies NAS: standard, compta, chantier.
+   - L'original est copie vers `archive/originals` avec le nom officiel CCM.
+   - Copies NAS: standard, compta, chantier, toutes avec le meme nom officiel.
    - Excel: `write_document_bundle`.
    - Le mapping client `client_grand_livre` s'active si `CLIENT_GRAND_LIVRE_WORKBOOK_PATH` est fourni; un echec Excel est journalise mais ne bloque pas le dispatch Interface / InterFast.
    - InterFast: adapter `disabled|attachment|expense`.
@@ -37,6 +39,10 @@
 En production NAS, les dossiers documentaires (`archive/*` et `classified/*`)
 sont exposes dans le partage DSM visible configure par `DOCUMENTS_SHARE_HOST_PATH`
 afin que le client puisse les consulter dans File Station.
+
+Les originaux entrants non valides restent d'abord dans le volume technique
+`processing/originals`. Ils ne deviennent visibles dans `archive/originals` et
+`classified/*` qu'apres validation du nommage CCM et du chantier requis.
 
 - `incoming/email`
 - `incoming/manual`

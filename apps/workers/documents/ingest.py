@@ -48,7 +48,7 @@ def ingest_document(
             }
 
         now = datetime.now(timezone.utc)
-        target_dir = current.archive_originals_dir / f"{now:%Y}" / f"{now:%m}" / f"{now:%d}"
+        target_dir = current.processing_dir / "originals" / f"{now:%Y}" / f"{now:%m}" / f"{now:%d}"
         target_dir.mkdir(parents=True, exist_ok=True)
         stored_name = f"{now:%Y%m%dT%H%M%SZ}_{slugify(path.stem)[:48]}_{sha256[:12]}{path.suffix.lower()}"
         stored_path = target_dir / stored_name

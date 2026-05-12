@@ -18,7 +18,9 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
             """
             SELECT vt.id AS task_id, vt.token, vt.status, vt.extracted_payload_json, vt.corrected_payload_json,
                    d.id AS document_id, d.source_name, d.archived_path, d.current_stage, d.validation_status,
-                   d.document_kind, d.supply_type, d.normalized_payload_json, d.validated_payload_json
+                   d.document_kind, d.supply_type, d.ccm_type, d.ccm_category, d.ccm_subcategory,
+                   d.ccm_refdoc, d.ccm_refclient, d.ccm_chantier,
+                   d.normalized_payload_json, d.validated_payload_json
             FROM validation_tasks vt
             JOIN documents d ON d.id = vt.document_id
             WHERE vt.token = ?
@@ -45,6 +47,12 @@ def get_validation_task(token: str, settings: Settings | None = None) -> dict[st
             "validation_status": row["validation_status"],
             "document_kind": row["document_kind"],
             "supply_type": row["supply_type"],
+            "ccm_type": row["ccm_type"],
+            "ccm_category": row["ccm_category"],
+            "ccm_subcategory": row["ccm_subcategory"],
+            "ccm_refdoc": row["ccm_refdoc"],
+            "ccm_refclient": row["ccm_refclient"],
+            "ccm_chantier": row["ccm_chantier"],
             "extracted_payload": json.loads(payload_json),
             "corrected_payload": json.loads(corrected_payload_json) if corrected_payload_json else None,
         }
@@ -88,7 +96,9 @@ def apply_validation(token: str, decision: ValidationDecision, settings: Setting
             connection.execute(
                 """
                 UPDATE documents
-                SET document_kind = ?, supply_type = ?, supplier_name = ?, supplier_siret = ?, invoice_number = ?, invoice_date = ?, due_date = ?,
+                SET document_kind = ?, supply_type = ?, ccm_type = ?, ccm_category = ?, ccm_subcategory = ?,
+                    ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?, ccm_naming_status = 'pending',
+                    supplier_name = ?, supplier_siret = ?, invoice_number = ?, invoice_date = ?, due_date = ?,
                     currency = ?, net_amount = ?, vat_amount = ?, gross_amount = ?, project_ref = ?, document_type = ?,
                     validation_status = 'approved', current_stage = 'validated', validated_payload_json = ?,
                     updated_at = CURRENT_TIMESTAMP
@@ -97,6 +107,12 @@ def apply_validation(token: str, decision: ValidationDecision, settings: Setting
                 (
                     corrected.document_kind,
                     corrected.supply_type,
+                    corrected.ccm_type,
+                    corrected.ccm_category,
+                    corrected.ccm_subcategory,
+                    corrected.ccm_refdoc,
+                    corrected.ccm_refclient,
+                    corrected.ccm_chantier,
                     corrected.supplier_name,
                     corrected.supplier_siret,
                     corrected.invoice_number,

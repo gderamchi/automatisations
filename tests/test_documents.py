@@ -23,6 +23,19 @@ def test_ingest_document_deduplicates(tmp_path, test_settings, sample_invoice_te
     assert second["document_id"] == first["document_id"]
 
 
+def test_ingest_stores_original_in_processing_area_until_dispatch(tmp_path, test_settings, sample_invoice_text):
+    invoice = tmp_path / "invoice.txt"
+    invoice.write_text(sample_invoice_text, encoding="utf-8")
+
+    ingested = ingest_document(str(invoice), "manual", settings=test_settings)
+
+    stored_path = Path(ingested["stored_path"])
+    assert stored_path.exists()
+    assert test_settings.processing_dir / "originals" in stored_path.parents
+    assert test_settings.archive_originals_dir not in stored_path.parents
+    assert not any(test_settings.classified_standard_dir.rglob("*"))
+
+
 def test_ocr_extracts_fields_and_auto_validates(tmp_path, test_settings, sample_invoice_text):
     invoice = tmp_path / "invoice.txt"
     invoice.write_text(sample_invoice_text, encoding="utf-8")

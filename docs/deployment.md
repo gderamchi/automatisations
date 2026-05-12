@@ -59,11 +59,15 @@ Le compose NAS expose les artefacts documentaires dans:
 
 Ce dossier contient:
 
-- `archive/originals`: originaux recus, conserves par date.
+- `archive/originals`: originaux valides, renommes avec le nom officiel CCM, conserves par date.
 - `archive/normalized`: JSON OCR normalises.
 - `classified/standard`: copies classees apres dispatch.
 - `classified/accounting`: copies comptables apres dispatch.
 - `classified/worksites`: copies par chantier apres dispatch.
+
+Les fichiers entrants non encore valides restent dans le volume technique
+`processing/originals`; ils ne sont pas exposes dans `classified/*` avant
+validation du type, de la categorie, de la sous-categorie et du chantier.
 
 Avant de demarrer le compose NAS, creer les dossiers visibles:
 
@@ -72,6 +76,18 @@ mkdir -p /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/archive/original
 mkdir -p /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/archive/normalized
 mkdir -p /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/classified
 ```
+
+### Audit nommage NAS
+
+Pour auditer les anciens fichiers sans rename automatique:
+
+```bash
+python -m apps.workers.cli audit-naming \
+  --root /volume1/Professionnel_CCM/12_AUTOMATISATION/documents \
+  --output-path /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/audit-nommage-ccm.json
+```
+
+Le rapport liste les fichiers conformes et non conformes. Les corrections en masse doivent etre validees humainement avant tout renommage.
 
 Pour migrer un ancien volume Docker vers ce dossier visible:
 

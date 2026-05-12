@@ -4,7 +4,6 @@ import json
 import secrets
 import shutil
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,16 @@ from apps.workers.common.hashing import compute_sha256, slugify
 from apps.workers.common.schemas import RoutingDecision, RoutingProposal
 from apps.workers.common.settings import Settings, get_settings
 from apps.workers.documents.excel import build_excel_review_payload, get_excel_form_options, has_nas_excel_targets, write_document_bundle
+from apps.workers.documents.naming import (
+    NamingValidationError,
+    build_official_filename,
+    ccm_category_to_legacy_supply,
+    ccm_type_to_legacy_kind,
+    infer_ccm_fields,
+    load_ccm_catalog,
+    official_filename_from_payload,
+    validate_ccm_fields,
+)
 from apps.workers.notifications.service import queue_notification, send_telegram_message_if_configured
 from apps.workers.routing.interfast_writer import build_interfast_adapter
 
@@ -76,15 +85,6 @@ def parse_manual_hints(subject: str | None, body: str | None) -> dict[str, str]:
     return hints
 
 
-def _to_decimal(value: Any) -> Decimal | None:
-    if value in (None, ""):
-        return None
-    try:
-        return Decimal(str(value)).quantize(Decimal("0.01"))
-    except (InvalidOperation, TypeError):
-        return None
-
-
 def _load_document_context(document_id: int, settings: Settings) -> dict[str, Any]:
     with get_connection(settings) as connection:
         row = connection.execute(
@@ -103,6 +103,12 @@ def _load_document_context(document_id: int, settings: Settings) -> dict[str, An
     for field in (
         "document_kind",
         "supply_type",
+        "ccm_type",
+        "ccm_category",
+        "ccm_subcategory",
+        "ccm_refdoc",
+        "ccm_refclient",
+        "ccm_chantier",
         "supplier_name",
         "supplier_siret",
         "invoice_number",
@@ -349,19 +355,90 @@ def _find_project_match(context: dict[str, Any], settings: Settings) -> tuple[di
     return top_candidate, top_score, notes, False
 
 
-def _build_final_filename(context: dict[str, Any], proposal: RoutingProposal) -> str:
-    payload = context["payload"]
+def _document_extension(context: dict[str, Any]) -> str:
     document = context["document"]
-    invoice_date = payload.get("invoice_date") or document.get("invoice_date")
-    try:
-        date_part = str(invoice_date)[:10] if invoice_date else datetime.utcnow().date().isoformat()
-    except Exception:
-        date_part = datetime.utcnow().date().isoformat()
-    label = slugify(proposal.expense_label or payload.get("supplier_name") or "document")[:80] or "document"
-    chantier = slugify(proposal.target_label or payload.get("project_ref") or "sans-chantier")[:40]
-    amount = _to_decimal(payload.get("gross_amount"))
-    amount_part = f"{amount:.2f}" if amount is not None else "0.00"
-    return f"{date_part}_{label}_{chantier}_{amount_part}.pdf"
+    for candidate in (document.get("archived_path"), document.get("source_name")):
+        if candidate:
+            suffix = Path(str(candidate)).suffix
+            if suffix:
+                return suffix.lower()
+    return ".pdf"
+
+
+def _payload_for_naming(context: dict[str, Any], proposal: RoutingProposal) -> dict[str, Any]:
+    payload = dict(context["payload"])
+    payload.update(
+        {
+            "document_kind": proposal.document_kind or payload.get("document_kind"),
+            "supply_type": proposal.supply_type or payload.get("supply_type"),
+            "ccm_type": proposal.ccm_type or payload.get("ccm_type"),
+            "ccm_category": proposal.ccm_category or payload.get("ccm_category"),
+            "ccm_subcategory": proposal.ccm_subcategory or payload.get("ccm_subcategory"),
+            "ccm_refdoc": proposal.ccm_refdoc or payload.get("ccm_refdoc") or payload.get("invoice_number"),
+            "ccm_refclient": proposal.ccm_refclient or payload.get("ccm_refclient"),
+            "ccm_chantier": proposal.ccm_chantier or payload.get("ccm_chantier"),
+            "supplier_name": payload.get("supplier_name"),
+            "invoice_number": payload.get("invoice_number"),
+            "invoice_date": payload.get("invoice_date"),
+            "project_ref": proposal.target_label or payload.get("project_ref"),
+        }
+    )
+    return payload
+
+
+def _hydrate_ccm_naming(context: dict[str, Any], proposal: RoutingProposal, settings: Settings) -> RoutingProposal:
+    catalog = load_ccm_catalog(settings)
+    payload = _payload_for_naming(context, proposal)
+    fields = infer_ccm_fields(
+        payload,
+        source_name=context["document"].get("source_name"),
+        target_label=proposal.target_label,
+    )
+    proposal.ccm_type = fields.get("ccm_type")
+    proposal.ccm_category = fields.get("ccm_category")
+    proposal.ccm_subcategory = fields.get("ccm_subcategory")
+    proposal.ccm_refdoc = fields.get("ccm_refdoc")
+    proposal.ccm_refclient = fields.get("ccm_refclient")
+    proposal.ccm_chantier = fields.get("ccm_chantier")
+    if proposal.ccm_type:
+        proposal.document_kind = ccm_type_to_legacy_kind(proposal.ccm_type)
+    if proposal.ccm_category or proposal.ccm_subcategory:
+        proposal.supply_type = ccm_category_to_legacy_supply(proposal.ccm_category, proposal.ccm_subcategory)
+    filename, validated_fields, errors = official_filename_from_payload(
+        payload,
+        source_name=context["document"].get("source_name"),
+        target_label=proposal.target_label,
+        extension=_document_extension(context),
+        catalog=catalog,
+    )
+    if filename:
+        proposal.final_filename = filename
+        proposal.ccm_naming_errors = {}
+        proposal.ccm_type = validated_fields.get("ccm_type")
+        proposal.ccm_category = validated_fields.get("ccm_category")
+        proposal.ccm_subcategory = validated_fields.get("ccm_subcategory")
+        proposal.ccm_refdoc = validated_fields.get("ccm_refdoc")
+        proposal.ccm_refclient = validated_fields.get("ccm_refclient")
+        proposal.ccm_chantier = validated_fields.get("ccm_chantier")
+    else:
+        proposal.ccm_naming_errors = errors
+        proposal.final_filename = None
+    return proposal
+
+
+def _validated_ccm_fields_for_proposal(context: dict[str, Any], proposal: RoutingProposal, settings: Settings) -> dict[str, str]:
+    payload = _payload_for_naming(context, proposal)
+    fields = infer_ccm_fields(
+        payload,
+        source_name=context["document"].get("source_name"),
+        target_label=proposal.target_label,
+    )
+    if not fields.get("ccm_chantier") and not proposal.worksite_external_id:
+        raise NamingValidationError({"ccm_chantier": "Chantier obligatoire avant classement NAS"})
+    validated_fields = validate_ccm_fields(fields, load_ccm_catalog(settings))
+    if not validated_fields.get("ccm_chantier") and proposal.worksite_external_id:
+        validated_fields["ccm_chantier"] = proposal.target_label or proposal.worksite_external_id
+    return validated_fields
 
 
 def hydrate_routing_proposal(
@@ -379,8 +456,7 @@ def hydrate_routing_proposal(
         hydrated.target_label = ctx["payload"].get("project_ref")
     if not hydrated.expense_label:
         hydrated.expense_label = _build_expense_label(ctx, hydrated)
-    if not hydrated.final_filename:
-        hydrated.final_filename = _build_final_filename(ctx, hydrated)
+    hydrated = _hydrate_ccm_naming(ctx, hydrated, current)
     hydrated.standard_path, hydrated.accounting_path, hydrated.worksite_path = _build_storage_paths(current, hydrated)
     return hydrated
 
@@ -482,6 +558,8 @@ def _can_auto_approve(proposal: RoutingProposal, settings: Settings) -> bool:
     return (
         not has_nas_excel_targets(settings)
         and
+        not proposal.ccm_naming_errors
+        and
         proposal.routing_confidence >= settings.routing_auto_approve_threshold
         and bool(proposal.worksite_external_id)
         and not proposal.ambiguous_match
@@ -536,7 +614,9 @@ def ensure_routing_task(
         connection.execute(
             """
             UPDATE documents
-            SET document_kind = ?, supply_type = ?, final_filename = ?, routing_confidence = ?,
+            SET document_kind = ?, supply_type = ?, ccm_type = ?, ccm_category = ?, ccm_subcategory = ?,
+                ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?,
+                ccm_naming_status = ?, ccm_naming_errors_json = ?, final_filename = ?, routing_confidence = ?,
                 worksite_external_id = ?, client_external_id = ?, interfast_target_type = ?, interfast_target_id = ?,
                 current_stage = 'needs_routing', updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
@@ -544,6 +624,14 @@ def ensure_routing_task(
             (
                 proposal.document_kind,
                 proposal.supply_type,
+                proposal.ccm_type,
+                proposal.ccm_category,
+                proposal.ccm_subcategory,
+                proposal.ccm_refdoc,
+                proposal.ccm_refclient,
+                proposal.ccm_chantier,
+                "invalid" if proposal.ccm_naming_errors else "preview",
+                json.dumps(proposal.ccm_naming_errors, ensure_ascii=False),
                 proposal.final_filename,
                 proposal.routing_confidence,
                 proposal.worksite_external_id,
@@ -578,7 +666,9 @@ def _auto_approve_and_dispatch(document_id: int, proposal: RoutingProposal, sett
         connection.execute(
             """
             UPDATE documents
-            SET document_kind = ?, supply_type = ?, final_filename = ?, routing_confidence = ?,
+            SET document_kind = ?, supply_type = ?, ccm_type = ?, ccm_category = ?, ccm_subcategory = ?,
+                ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?,
+                ccm_naming_status = ?, ccm_naming_errors_json = ?, final_filename = ?, routing_confidence = ?,
                 worksite_external_id = ?, client_external_id = ?, interfast_target_type = ?, interfast_target_id = ?,
                 interfast_sync_status = ?, current_stage = 'routed', updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
@@ -586,6 +676,14 @@ def _auto_approve_and_dispatch(document_id: int, proposal: RoutingProposal, sett
             (
                 proposal.document_kind,
                 proposal.supply_type,
+                proposal.ccm_type,
+                proposal.ccm_category,
+                proposal.ccm_subcategory,
+                proposal.ccm_refdoc,
+                proposal.ccm_refclient,
+                proposal.ccm_chantier,
+                "valid" if not proposal.ccm_naming_errors else "invalid",
+                json.dumps(proposal.ccm_naming_errors, ensure_ascii=False),
                 proposal.final_filename,
                 proposal.routing_confidence,
                 proposal.worksite_external_id,
@@ -622,6 +720,7 @@ def list_pending_routing_tasks(settings: Settings | None = None) -> list[dict[st
         rows = connection.execute(
             """
             SELECT rt.token, rt.created_at, d.id AS document_id, d.source_name, d.document_kind, d.supply_type,
+                   d.ccm_type, d.ccm_category, d.ccm_subcategory, d.ccm_naming_errors_json,
                    d.project_ref, d.final_filename, d.routing_confidence
             FROM routing_tasks rt
             JOIN documents d ON d.id = rt.document_id
@@ -640,7 +739,9 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
             """
             SELECT rt.id AS task_id, rt.token, rt.status, rt.proposed_payload_json, rt.corrected_payload_json,
                    d.id AS document_id, d.source_name, d.archived_path, d.current_stage, d.validation_status,
-                   d.document_kind, d.supply_type, d.project_ref, d.routing_confidence, d.final_filename,
+                   d.document_kind, d.supply_type, d.ccm_type, d.ccm_category, d.ccm_subcategory,
+                   d.ccm_refdoc, d.ccm_refclient, d.ccm_chantier, d.ccm_naming_errors_json,
+                   d.project_ref, d.routing_confidence, d.final_filename,
                    d.validated_payload_json, d.normalized_payload_json, d.supplier_name, d.invoice_number,
                    d.invoice_date, d.due_date, d.currency, d.net_amount, d.vat_amount, d.gross_amount
             FROM routing_tasks rt
@@ -652,7 +753,11 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
     if not row:
         return None
     document_payload = json.loads(row["validated_payload_json"] or row["normalized_payload_json"] or "{}")
-    for field in ("supplier_name", "invoice_number", "invoice_date", "due_date", "currency", "net_amount", "vat_amount", "gross_amount", "project_ref"):
+    for field in (
+        "supplier_name", "invoice_number", "invoice_date", "due_date", "currency",
+        "net_amount", "vat_amount", "gross_amount", "project_ref",
+        "ccm_type", "ccm_category", "ccm_subcategory", "ccm_refdoc", "ccm_refclient", "ccm_chantier",
+    ):
         if row[field] not in (None, ""):
             document_payload[field] = row[field]
     proposed = hydrate_routing_proposal(
@@ -683,6 +788,13 @@ def get_routing_task(token: str, settings: Settings | None = None) -> dict[str, 
         "validation_status": row["validation_status"],
         "document_kind": row["document_kind"],
         "supply_type": row["supply_type"],
+        "ccm_type": row["ccm_type"],
+        "ccm_category": row["ccm_category"],
+        "ccm_subcategory": row["ccm_subcategory"],
+        "ccm_refdoc": row["ccm_refdoc"],
+        "ccm_refclient": row["ccm_refclient"],
+        "ccm_chantier": row["ccm_chantier"],
+        "ccm_naming_errors": json.loads(row["ccm_naming_errors_json"] or "{}"),
         "project_ref": row["project_ref"],
         "routing_confidence": row["routing_confidence"],
         "final_filename": row["final_filename"],
@@ -721,7 +833,9 @@ def update_document_payload_from_routing(document_id: int, payload: dict[str, An
             """
             UPDATE documents
             SET supplier_name = ?, invoice_number = ?, invoice_date = ?, due_date = ?, currency = ?,
-                net_amount = ?, vat_amount = ?, gross_amount = ?, project_ref = ?, normalized_payload_json = ?,
+                net_amount = ?, vat_amount = ?, gross_amount = ?, project_ref = ?,
+                ccm_type = ?, ccm_category = ?, ccm_subcategory = ?, ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?,
+                normalized_payload_json = ?,
                 validated_payload_json = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -735,6 +849,12 @@ def update_document_payload_from_routing(document_id: int, payload: dict[str, An
                 str(merged_payload.get("vat_amount")) if merged_payload.get("vat_amount") not in (None, "") else None,
                 str(merged_payload.get("gross_amount")) if merged_payload.get("gross_amount") not in (None, "") else None,
                 merged_payload.get("project_ref"),
+                merged_payload.get("ccm_type"),
+                merged_payload.get("ccm_category"),
+                merged_payload.get("ccm_subcategory"),
+                merged_payload.get("ccm_refdoc"),
+                merged_payload.get("ccm_refclient"),
+                merged_payload.get("ccm_chantier"),
                 payload_json,
                 payload_json,
                 document_id,
@@ -761,11 +881,26 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
         corrected = hydrate_routing_proposal(task["document_id"], decision.corrected_data or proposed, current)
 
         if decision.decision == "approve":
+            context = _load_document_context(task["document_id"], current)
+            validated_ccm = _validated_ccm_fields_for_proposal(context, corrected, current)
+            corrected.ccm_type = validated_ccm["ccm_type"]
+            corrected.ccm_category = validated_ccm["ccm_category"]
+            corrected.ccm_subcategory = validated_ccm["ccm_subcategory"]
+            corrected.ccm_refdoc = validated_ccm["ccm_refdoc"]
+            corrected.ccm_refclient = validated_ccm.get("ccm_refclient")
+            corrected.ccm_chantier = validated_ccm.get("ccm_chantier")
+            corrected.document_kind = ccm_type_to_legacy_kind(corrected.ccm_type)
+            corrected.supply_type = ccm_category_to_legacy_supply(corrected.ccm_category, corrected.ccm_subcategory)
+            corrected.final_filename = build_official_filename(validated_ccm, _document_extension(context))
+            corrected.ccm_naming_errors = {}
             sync_status = "pending" if corrected.interfast_write_mode != "disabled" else "disabled"
             connection.execute(
                 """
                 UPDATE documents
-                SET document_kind = ?, supply_type = ?, final_filename = ?, routing_confidence = ?,
+                SET document_kind = ?, supply_type = ?, ccm_type = ?, ccm_category = ?, ccm_subcategory = ?,
+                    ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?,
+                    ccm_naming_status = 'valid', ccm_naming_errors_json = '{}',
+                    final_filename = ?, routing_confidence = ?,
                     worksite_external_id = ?, client_external_id = ?, interfast_target_type = ?, interfast_target_id = ?,
                     project_ref = ?, interfast_sync_status = ?, current_stage = 'routed', updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -773,6 +908,12 @@ def apply_routing(token: str, decision: RoutingDecision, settings: Settings | No
                 (
                     corrected.document_kind,
                     corrected.supply_type,
+                    corrected.ccm_type,
+                    corrected.ccm_category,
+                    corrected.ccm_subcategory,
+                    corrected.ccm_refdoc,
+                    corrected.ccm_refclient,
+                    corrected.ccm_chantier,
                     corrected.final_filename,
                     corrected.routing_confidence,
                     corrected.worksite_external_id,
@@ -908,6 +1049,44 @@ def _copy_if_needed(source_path: Path, target_path: Path) -> dict[str, Any]:
     return {"path": str(target_path), "copied": True}
 
 
+def _ensure_official_archive_copy(
+    document_id: int,
+    source_path: Path,
+    proposal: RoutingProposal,
+    context: dict[str, Any],
+    settings: Settings,
+) -> Path:
+    if not proposal.final_filename:
+        raise NamingValidationError({"final_filename": "Nom officiel absent"})
+    invoice_date = str(context["payload"].get("invoice_date") or "")[:10]
+    try:
+        archive_date = datetime.fromisoformat(invoice_date).date() if invoice_date else datetime.utcnow().date()
+    except ValueError:
+        archive_date = datetime.utcnow().date()
+    target_dir = settings.archive_originals_dir / f"{archive_date:%Y}" / f"{archive_date:%m}" / f"{archive_date:%d}"
+    target_path = target_dir / proposal.final_filename
+    _copy_if_needed(source_path, target_path)
+    with get_connection(settings) as connection:
+        connection.execute(
+            """
+            UPDATE documents
+            SET archived_path = ?, final_filename = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (str(target_path), proposal.final_filename, document_id),
+        )
+        connection.execute(
+            """
+            UPDATE document_files
+            SET stored_name = ?, stored_path = ?
+            WHERE document_id = ? AND file_role = 'original'
+            """,
+            (target_path.name, str(target_path), document_id),
+        )
+        connection.commit()
+    return target_path
+
+
 def dispatch_document(
     document_id: int,
     settings: Settings | None = None,
@@ -963,6 +1142,19 @@ def dispatch_document(
             proposal.model_dump(mode="json") | {key: value for key, value in routing_payload_override.items() if value is not None}
         )
     proposal = hydrate_routing_proposal(document_id, proposal, current, context=context)
+    validated_ccm = _validated_ccm_fields_for_proposal(context, proposal, current)
+    proposal.ccm_type = validated_ccm["ccm_type"]
+    proposal.ccm_category = validated_ccm["ccm_category"]
+    proposal.ccm_subcategory = validated_ccm["ccm_subcategory"]
+    proposal.ccm_refdoc = validated_ccm["ccm_refdoc"]
+    proposal.ccm_refclient = validated_ccm.get("ccm_refclient")
+    proposal.ccm_chantier = validated_ccm.get("ccm_chantier")
+    proposal.document_kind = ccm_type_to_legacy_kind(proposal.ccm_type)
+    proposal.supply_type = ccm_category_to_legacy_supply(proposal.ccm_category, proposal.ccm_subcategory)
+    proposal.final_filename = build_official_filename(validated_ccm, _document_extension(context))
+    proposal.ccm_naming_errors = {}
+    archived_path = _ensure_official_archive_copy(document_id, archived_path, proposal, context, current)
+    context["document"]["archived_path"] = str(archived_path)
 
     excel_result = write_document_bundle(
         document_id,
@@ -1038,10 +1230,23 @@ def dispatch_document(
         connection.execute(
             """
             UPDATE documents
-            SET current_stage = ?, interfast_sync_status = ?, updated_at = CURRENT_TIMESTAMP
+            SET current_stage = ?, interfast_sync_status = ?,
+                ccm_type = ?, ccm_category = ?, ccm_subcategory = ?, ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?,
+                ccm_naming_status = 'valid', ccm_naming_errors_json = '{}',
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
-            (next_stage, interfast_sync_status, document_id),
+            (
+                next_stage,
+                interfast_sync_status,
+                proposal.ccm_type,
+                proposal.ccm_category,
+                proposal.ccm_subcategory,
+                proposal.ccm_refdoc,
+                proposal.ccm_refclient,
+                proposal.ccm_chantier,
+                document_id,
+            ),
         )
         connection.commit()
 

@@ -221,6 +221,9 @@ def test_mail_worker_reply_links_use_public_base_url_for_validation(test_setting
     body = _extract_text_body(message)
 
     assert recipient == "supplier@example.com"
+    assert "Documents reçus : 1" in body
+    assert "À vérifier : 1" in body
+    assert "Chantier/catégorie à confirmer : 0" in body
     assert "https://ocr.example.com/review/batch-token-123" in body
     assert "https://ocr.example.com/validate/val-token-123" in body
     assert "localhost" not in body
@@ -293,6 +296,57 @@ def test_mail_worker_reply_links_use_public_base_url_for_routing(test_settings):
     message, _recipient = sent_messages[0][0]
     body = _extract_text_body(message)
 
+    assert "Documents reçus : 1" in body
+    assert "À vérifier : 0" in body
+    assert "Chantier/catégorie à confirmer : 1" in body
     assert "https://ocr.example.com/review/batch-token-456" in body
     assert "https://ocr.example.com/route/route-token-456" in body
 
+
+def test_mail_worker_reply_summary_counts_available_routing_tasks(test_settings):
+    settings = test_settings.model_copy(update={"public_base_url": "https://ocr.example.com"})
+    sent_messages = []
+    worker = MailAutomationWorker(
+        settings=settings,
+        imap_factory=lambda: FakeImapClient({}),
+        smtp_sender=lambda *args, **kwargs: sent_messages.append((args, kwargs)),
+    )
+
+    worker._send_reply(
+        _sample_mail(),
+        [
+            {
+                "status": "ok",
+                "attachment": "ticket-carburant.pdf",
+                "fields": {"supplier_name": "Station Total"},
+                "validation_required": False,
+                "validation_token": None,
+                "routing_token": "route-token-existing",
+                "routing_task_created": False,
+                "routing_task_available": True,
+                "auto_approved": False,
+                "duplicate": True,
+            },
+            {
+                "status": "ok",
+                "attachment": "ticket-repas.pdf",
+                "fields": {"supplier_name": "Restaurant"},
+                "validation_required": True,
+                "validation_token": "val-token-789",
+                "routing_token": None,
+                "routing_task_created": False,
+                "routing_task_available": False,
+                "auto_approved": False,
+                "duplicate": False,
+            },
+        ],
+        batch_token="batch-token-summary",
+    )
+
+    message, _recipient = sent_messages[0][0]
+    body = _extract_text_body(message)
+
+    assert "Documents reçus : 2" in body
+    assert "À vérifier : 1" in body
+    assert "Chantier/catégorie à confirmer : 1" in body
+    assert "https://ocr.example.com/review/batch-token-summary" in body

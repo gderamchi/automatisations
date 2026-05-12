@@ -84,6 +84,7 @@ class MailAutomationWorker:
             "attachments_processed": 0,
             "attachments_failed": 0,
             "routing_tasks_created": 0,
+            "routing_tasks_available": 0,
             "reply_sent": 0,
             "bootstrapped": False,
         }
@@ -104,6 +105,7 @@ class MailAutomationWorker:
             raw_uids = [uid for uid in raw_uids if int(uid) > (last_uid or 0)]
             summary["messages_seen"] = len(raw_uids)
             max_processed_uid = last_uid or 0
+            routing_available_document_ids: set[int] = set()
             for uid_bytes in raw_uids:
                 uid = uid_bytes.decode()
                 max_processed_uid = max(max_processed_uid, int(uid))
@@ -131,7 +133,15 @@ class MailAutomationWorker:
                         summary["attachments_failed"] += 1
                     else:
                         summary["attachments_processed"] += 1
-                        summary["routing_tasks_created"] += int(bool(result.get("routing_task_created")))
+                        routing_available = bool(result.get("routing_task_available") or result.get("routing_task_created"))
+                        document_id = result.get("document_id")
+                        if routing_available and isinstance(document_id, int) and document_id not in routing_available_document_ids:
+                            routing_available_document_ids.add(document_id)
+                            summary["routing_tasks_created"] += 1
+                            summary["routing_tasks_available"] += 1
+                        elif routing_available and document_id is None:
+                            summary["routing_tasks_created"] += 1
+                            summary["routing_tasks_available"] += 1
 
                 if attachment_results:
                     try:
@@ -295,10 +305,8 @@ class MailAutomationWorker:
                 "confidence": document_summary.get("confidence"),
                 "fields": document_summary.get("payload", {}),
                 "duplicate": bool(ingest_result.get("duplicate")),
-                "routing_task_created": bool(routing.get("created")) or (
-                    not bool(ocr_result.get("validation_required", document_summary.get("validation_status") == "pending"))
-                    and not bool(ingest_result.get("duplicate"))
-                ),
+                "routing_task_created": bool(routing.get("created")),
+                "routing_task_available": bool(routing.get("routing_token")),
             }
             self._record_processed(
                 processed_key=processed_key,
@@ -405,7 +413,7 @@ class MailAutomationWorker:
             return
         base_url = self.settings.public_base_url.rstrip("/")
         reply_lines = [_format_attachment_result(r, base_url) for r in results]
-        body = _build_reply_body(mail, reply_lines, base_url, batch_token)
+        body = _build_reply_body(mail, results, reply_lines, base_url, batch_token)
         subject = f"{self.settings.mail_reply_subject_prefix} Re: {mail.subject or '(sans sujet)'}"
         reply_recipient = mail.sender_email or self.settings.reply_to_email or mail.recipient_email
         if not reply_recipient:
@@ -587,8 +595,28 @@ def _build_raw_excerpt(raw_text: str, max_length: int = 900) -> str:
     return compact[:max_length]
 
 
-def _build_reply_body(mail: ParsedMail, reply_lines: list[str], base_url: str, batch_token: str) -> str:
-    needs_action = any("A VERIFIER" in line for line in reply_lines)
+def _reply_summary_counts(results: list[dict[str, Any]]) -> dict[str, int]:
+    received = len(results)
+    pending_validation = sum(1 for result in results if result.get("validation_required"))
+    pending_routing = sum(
+        1
+        for result in results
+        if not result.get("validation_required") and result.get("routing_token") and not result.get("auto_approved")
+    )
+    classified = sum(1 for result in results if result.get("auto_approved"))
+    failed = sum(1 for result in results if result.get("status") == "error")
+    return {
+        "received": received,
+        "pending_validation": pending_validation,
+        "pending_routing": pending_routing,
+        "classified": classified,
+        "failed": failed,
+    }
+
+
+def _build_reply_body(mail: ParsedMail, results: list[dict[str, Any]], reply_lines: list[str], base_url: str, batch_token: str) -> str:
+    counts = _reply_summary_counts(results)
+    needs_action = counts["pending_validation"] > 0 or counts["pending_routing"] > 0
     header = "Des documents nécessitent votre validation" if needs_action else "Vos documents ont été traités avec succès"
     review_link = f"{base_url}/review/{batch_token}"
     action_block = (
@@ -609,6 +637,12 @@ def _build_reply_body(mail: ParsedMail, reply_lines: list[str], base_url: str, b
             "",
             f"Mail traité : {mail.subject or '(sans sujet)'}",
             f"Pièces jointes : {len(reply_lines)}",
+            "",
+            f"Documents reçus : {counts['received']}",
+            f"À vérifier : {counts['pending_validation']}",
+            f"Chantier/catégorie à confirmer : {counts['pending_routing']}",
+            f"Classés : {counts['classified']}",
+            f"Erreurs : {counts['failed']}",
             "",
             *reply_lines,
             "",

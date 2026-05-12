@@ -18,6 +18,13 @@ class OCRNormalized(BaseModel):
     document_type: Literal["purchase_invoice", "sales_invoice", "credit_note", "unknown"] = "purchase_invoice"
     document_kind: str | None = None
     supply_type: str | None = None
+    ccm_type: str | None = None
+    ccm_category: str | None = None
+    ccm_subcategory: str | None = None
+    ccm_refdoc: str | None = None
+    ccm_refclient: str | None = None
+    ccm_chantier: str | None = None
+    ccm_final_filename: str | None = None
     supplier_name: str | None = None
     supplier_siret: str | None = None
     invoice_number: str | None = None
@@ -46,6 +53,13 @@ class ValidationDecision(BaseModel):
 class RoutingProposal(BaseModel):
     document_kind: str = "unknown"
     supply_type: str = "unknown"
+    ccm_type: str | None = None
+    ccm_category: str | None = None
+    ccm_subcategory: str | None = None
+    ccm_refdoc: str | None = None
+    ccm_refclient: str | None = None
+    ccm_chantier: str | None = None
+    ccm_naming_errors: dict[str, str] = Field(default_factory=dict)
     expense_label: str | None = None
     final_filename: str | None = None
     routing_confidence: float = 0.0

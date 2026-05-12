@@ -13,6 +13,7 @@ from apps.workers.common.jsonio import dump_json
 from apps.workers.common.schemas import OCRNormalized
 from apps.workers.common.settings import Settings, get_settings
 from apps.workers.connectors.mistral_client import MistralOCRClient
+from apps.workers.documents.naming import infer_ccm_fields
 from apps.workers.routing.service import ensure_routing_task, parse_manual_hints
 
 
@@ -380,6 +381,12 @@ def normalize_ocr_payload(
         raw_text=text[:20000],
         manual_hints=manual_hints or {},
     )
+    ccm_fields = infer_ccm_fields(payload.model_dump(mode="json"))
+    payload.ccm_type = ccm_fields.get("ccm_type")
+    payload.ccm_category = ccm_fields.get("ccm_category")
+    payload.ccm_subcategory = ccm_fields.get("ccm_subcategory")
+    payload.ccm_refdoc = ccm_fields.get("ccm_refdoc")
+    payload.ccm_chantier = ccm_fields.get("ccm_chantier")
     missing_fields = [
         field
         for field in ("supplier_name", "invoice_number", "invoice_date", "gross_amount")
@@ -444,7 +451,9 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
         connection.execute(
             """
             UPDATE documents
-            SET document_type = ?, document_kind = ?, supply_type = ?, supplier_name = ?, supplier_siret = ?, invoice_number = ?,
+            SET document_type = ?, document_kind = ?, supply_type = ?, ccm_type = ?, ccm_category = ?,
+                ccm_subcategory = ?, ccm_refdoc = ?, ccm_refclient = ?, ccm_chantier = ?,
+                supplier_name = ?, supplier_siret = ?, invoice_number = ?,
                 invoice_date = ?, due_date = ?, currency = ?, net_amount = ?, vat_amount = ?,
                 gross_amount = ?, project_ref = ?, confidence = ?, normalized_payload_json = ?,
                 validation_status = ?, current_stage = ?, validated_payload_json = CASE WHEN ? = 'validated' THEN ? ELSE validated_payload_json END,
@@ -455,6 +464,12 @@ def run_document_ocr(document_id: int, settings: Settings | None = None) -> dict
                 normalized.document_type,
                 normalized.document_kind,
                 normalized.supply_type,
+                normalized.ccm_type,
+                normalized.ccm_category,
+                normalized.ccm_subcategory,
+                normalized.ccm_refdoc,
+                normalized.ccm_refclient,
+                normalized.ccm_chantier,
                 normalized.supplier_name,
                 normalized.supplier_siret,
                 normalized.invoice_number,

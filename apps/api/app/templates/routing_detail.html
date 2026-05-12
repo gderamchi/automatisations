@@ -64,11 +64,11 @@
           <div class="summary-card">
             <div class="summary-row">
               <span class="summary-label">Type</span>
-              <span class="summary-value">{{ payload.document_kind or "inconnu" }}</span>
+              <span class="summary-value">{{ payload.ccm_type or "inconnu" }}</span>
             </div>
             <div class="summary-row">
-              <span class="summary-label">Fourniture</span>
-              <span class="summary-value">{{ payload.supply_type or "inconnu" }}</span>
+              <span class="summary-label">Catégorie</span>
+              <span class="summary-value">{{ payload.ccm_category or "inconnu" }}{% if payload.ccm_subcategory %} · {{ payload.ccm_subcategory }}{% endif %}</span>
             </div>
             <div class="summary-row">
               <span class="summary-label">Chantier</span>
@@ -85,6 +85,17 @@
             <ul class="simple-list muted">
               {% for note in payload.matching_notes %}
               <li>{{ note }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+
+          {% if payload.ccm_naming_errors %}
+          <div class="panel-subsection error-surface">
+            <h3>Nommage CCM à compléter</h3>
+            <ul class="simple-list">
+              {% for _field, error in payload.ccm_naming_errors.items() %}
+              <li>{{ error }}</li>
               {% endfor %}
             </ul>
           </div>
@@ -108,18 +119,31 @@
 
             <div class="form-grid">
               <label>
-                Nature document
-                <select name="document_kind">
-                  {% for kind in ["invoice", "quotation", "receipt", "purchase_order", "credit_note", "unknown"] %}
-                  <option value="{{ kind }}" {{ "selected" if payload.document_kind == kind else "" }}>{{ kind }}</option>
+                Type document CCM
+                <select name="ccm_type" id="ccm_type" required>
+                  <option value="">Choisir</option>
+                  {% for type_code in ccm_catalog.types %}
+                  <option value="{{ type_code }}" {{ "selected" if payload.ccm_type == type_code else "" }}>{{ type_code }}</option>
                   {% endfor %}
                 </select>
               </label>
               <label>
-                Type fourniture
-                <select name="supply_type">
-                  {% for stype in ["carburant", "materiel", "hotel", "repas", "peage", "consommable", "unknown"] %}
-                  <option value="{{ stype }}" {{ "selected" if payload.supply_type == stype else "" }}>{{ stype }}</option>
+                Catégorie
+                <select name="ccm_category" id="ccm_category" required>
+                  <option value="">Choisir</option>
+                  {% for category in ccm_catalog.categories.keys() %}
+                  <option value="{{ category }}" {{ "selected" if payload.ccm_category == category else "" }}>{{ category }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                Sous-catégorie
+                <select name="ccm_subcategory" id="ccm_subcategory" required>
+                  <option value="">Choisir</option>
+                  {% for category, subcategories in ccm_catalog.categories.items() %}
+                    {% for subcategory in subcategories %}
+                    <option value="{{ subcategory }}" data-category="{{ category }}" {{ "selected" if payload.ccm_subcategory == subcategory else "" }}>{{ subcategory }}</option>
+                    {% endfor %}
                   {% endfor %}
                 </select>
               </label>
@@ -150,11 +174,11 @@
               </label>
               <label>
                 N° facture
-                <input type="text" name="invoice_number" value="{{ document.invoice_number or '' }}">
+                <input type="text" name="invoice_number" id="invoice_number" value="{{ document.invoice_number or '' }}">
               </label>
               <label>
                 Date facture
-                <input type="date" name="invoice_date" value="{{ document.invoice_date or '' }}">
+                <input type="date" name="invoice_date" id="invoice_date" value="{{ document.invoice_date or '' }}">
               </label>
               <label>
                 Montant HT
@@ -223,6 +247,18 @@
               <label>
                 Virement reçu
                 <input type="number" step="0.01" name="received_transfer_amount" value="{{ payload.received_transfer_amount or review.defaults.received_transfer_amount or '' }}">
+              </label>
+              <label>
+                Réf document CCM
+                <input type="text" name="ccm_refdoc" id="ccm_refdoc" value="{{ payload.ccm_refdoc or document.invoice_number or '' }}">
+              </label>
+              <label>
+                Réf client
+                <input type="text" name="ccm_refclient" id="ccm_refclient" value="{{ payload.ccm_refclient or '' }}">
+              </label>
+              <label>
+                Chantier CCM
+                <input type="text" name="ccm_chantier" id="ccm_chantier" value="{{ payload.ccm_chantier or payload.target_label or document.project_ref or '' }}">
               </label>
               {% if review.enabled %}
               <label class="field-span">
@@ -324,8 +360,8 @@
                   <input type="text" name="currency" value="{{ document.currency or 'EUR' }}">
                 </label>
                 <label>
-                  Nom fichier technique
-                  <input type="text" name="final_filename" value="{{ payload.final_filename or '' }}" readonly>
+                  Nom officiel
+                  <input type="text" name="final_filename" id="ccm_filename_preview" value="{{ payload.final_filename or '' }}" readonly>
                 </label>
                 <label>
                   Client InterFast
@@ -379,19 +415,60 @@
       const worksiteSelect = document.getElementById("worksite_external_id");
       const clientField = document.getElementById("client_external_id");
       const targetLabelField = document.getElementById("target_label");
+      const categorySelect = document.getElementById("ccm_category");
+      const subcategorySelect = document.getElementById("ccm_subcategory");
+      const normalizeToken = (value, fallback = "") => {
+        const raw = (value || fallback || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+        return raw.replace(/[^A-Z0-9]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+      };
+      const syncSubcategories = () => {
+        const category = categorySelect?.value || "";
+        for (const option of subcategorySelect?.options || []) {
+          if (!option.value) continue;
+          const enabled = !category || option.dataset.category === category;
+          option.hidden = !enabled;
+          option.disabled = !enabled;
+        }
+        if (subcategorySelect?.selectedOptions[0]?.disabled) subcategorySelect.value = "";
+        syncFilenamePreview();
+      };
+      const syncFilenamePreview = () => {
+        const date = document.getElementById("invoice_date")?.value || "AAAA-MM-JJ";
+        const type = document.getElementById("ccm_type")?.value || "TYPE";
+        const supplier = normalizeToken(document.querySelector('input[name="supplier_name"]')?.value, "NOM");
+        const refdoc = normalizeToken(document.getElementById("ccm_refdoc")?.value || document.getElementById("invoice_number")?.value, "NR") || "NR";
+        const subcategory = document.getElementById("ccm_subcategory")?.value || "SOUS-CATEGORIE";
+        const refclient = normalizeToken(document.getElementById("ccm_refclient")?.value);
+        const chantier = normalizeToken(document.getElementById("ccm_chantier")?.value || targetLabelField?.value);
+        const parts = [date, type, supplier, `${refdoc}-${subcategory}`];
+        if (refclient) parts.push(refclient);
+        if (chantier) parts.push(chantier);
+        const preview = document.getElementById("ccm_filename_preview");
+        if (preview) preview.value = `${parts.join("_")}.ext`;
+      };
       const syncWorksiteSelection = () => {
         if (!worksiteSelect) return;
         const selected = worksiteSelect.options[worksiteSelect.selectedIndex];
         if (!selected || !selected.value) {
           if (clientField) clientField.value = "";
           if (targetLabelField) targetLabelField.value = "";
+          syncFilenamePreview();
           return;
         }
         if (clientField) clientField.value = selected.dataset.clientId || "";
         if (targetLabelField) targetLabelField.value = selected.dataset.targetLabel || selected.textContent.trim();
+        const chantierField = document.getElementById("ccm_chantier");
+        if (chantierField) chantierField.value = selected.dataset.targetLabel || selected.textContent.trim();
+        syncFilenamePreview();
       };
       worksiteSelect?.addEventListener("change", syncWorksiteSelection);
+      for (const id of ["ccm_type", "ccm_category", "ccm_subcategory", "ccm_refdoc", "ccm_refclient", "ccm_chantier", "invoice_number", "invoice_date"]) {
+        document.getElementById(id)?.addEventListener("input", syncFilenamePreview);
+        document.getElementById(id)?.addEventListener("change", id === "ccm_category" ? syncSubcategories : syncFilenamePreview);
+      }
       syncWorksiteSelection();
+      syncSubcategories();
+      syncFilenamePreview();
     </script>
   </body>
 </html>
