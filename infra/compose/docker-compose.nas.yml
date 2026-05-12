@@ -13,6 +13,9 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - automation_data:/data
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/originals:/data/archive/originals
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/normalized:/data/archive/normalized
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/classified:/data/classified
       - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
@@ -35,6 +38,9 @@ services:
     command: python -m apps.workers.cli init-db
     volumes:
       - automation_data:/data
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/originals:/data/archive/originals
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/normalized:/data/archive/normalized
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/classified:/data/classified
       - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
     restart: "no"
     profiles: ["init"]
@@ -51,6 +57,9 @@ services:
     command: python -m apps.workers.cli mail-worker
     volumes:
       - automation_data:/data
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/originals:/data/archive/originals
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/normalized:/data/archive/normalized
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/classified:/data/classified
       - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
     depends_on:
       api:
@@ -75,6 +84,9 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
       - automation_data:/data
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/originals:/data/archive/originals
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/archive/normalized:/data/archive/normalized
+      - ${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}/classified:/data/classified
       - ${ACCOUNTING_SHARE_HOST_PATH:-/volume1/Professionnel_CCM}:${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}
       - ../../n8n/workflows:/workflows:ro
     depends_on:

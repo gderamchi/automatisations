@@ -34,6 +34,10 @@
 
 ## Volumes NAS standardises
 
+En production NAS, les dossiers documentaires (`archive/*` et `classified/*`)
+sont exposes dans le partage DSM visible configure par `DOCUMENTS_SHARE_HOST_PATH`
+afin que le client puisse les consulter dans File Station.
+
 - `incoming/email`
 - `incoming/manual`
 - `processing`

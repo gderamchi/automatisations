@@ -16,17 +16,19 @@
    - Renseigner `INTERNAL_API_BASE_URL` (par defaut `http://api:8080`) pour les workflows n8n.
    - Pour l'ecriture Excel NAS, verifier que `ACCOUNTING_SHARE_HOST_PATH`, `ACCOUNTING_SHARE_MOUNT` et `ACCOUNTING_SHARE_ROOT` pointent vers le partage comptable actif.
 2. Monter le partage NAS en volume Docker pour `/data`.
+   - Le compose NAS garde l'etat technique dans le volume Docker `automation_data`.
+   - Les documents client sont exposes dans `${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}` avec `archive/originals`, `archive/normalized` et `classified`.
    - Le compose NAS monte aussi le partage `Professionnel_CCM` vers `${ACCOUNTING_SHARE_MOUNT:-/mnt/professionnel_ccm}` pour les grands livres et la tresorerie.
 3. Initialiser la base (one-shot):
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml --profile init run --rm worker-init
+docker compose -f infra/compose/docker-compose.nas.yml --profile init run --rm worker-init
 ```
 
 4. Demarrer les services continus:
 
 ```bash
-docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker n8n
+docker compose -f infra/compose/docker-compose.nas.yml up -d api mail-worker n8n watchtower
 ```
 
 5. Importer les workflows n8n depuis `n8n/workflows`.
@@ -44,7 +46,42 @@ docker compose -f infra/compose/docker-compose.yml up --build -d api mail-worker
 - Changer `INTERNAL_API_TOKEN`, `VALIDATION_PASSWORD`.
 - Passer `OCR_MOCK_MODE=false`.
 - Exposer l'UI derriere VPN ou reverse proxy NAS.
-- Sauvegarder regulierement `state/sqlite` et `archive`.
+- Sauvegarder regulierement `state/sqlite` et le dossier DSM visible des documents.
+
+## Dossier documents visible DSM
+
+En production NAS, les PDF ne doivent pas rester uniquement dans `/volume1/@docker/...`.
+Le compose NAS expose les artefacts documentaires dans:
+
+```text
+/volume1/Professionnel_CCM/12_AUTOMATISATION/documents
+```
+
+Ce dossier contient:
+
+- `archive/originals`: originaux recus, conserves par date.
+- `archive/normalized`: JSON OCR normalises.
+- `classified/standard`: copies classees apres dispatch.
+- `classified/accounting`: copies comptables apres dispatch.
+- `classified/worksites`: copies par chantier apres dispatch.
+
+Avant de demarrer le compose NAS, creer les dossiers visibles:
+
+```bash
+mkdir -p /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/archive/originals
+mkdir -p /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/archive/normalized
+mkdir -p /volume1/Professionnel_CCM/12_AUTOMATISATION/documents/classified
+```
+
+Pour migrer un ancien volume Docker vers ce dossier visible:
+
+```bash
+OLD_DATA=$(/usr/local/bin/docker volume inspect auto_automation_data --format '{{.Mountpoint}}')
+VISIBLE_DATA=/volume1/Professionnel_CCM/12_AUTOMATISATION/documents
+rsync -a "$OLD_DATA/archive/originals/" "$VISIBLE_DATA/archive/originals/"
+rsync -a "$OLD_DATA/archive/normalized/" "$VISIBLE_DATA/archive/normalized/"
+rsync -a "$OLD_DATA/classified/" "$VISIBLE_DATA/classified/"
+```
 
 ## Mode auto-update (recommande)
 

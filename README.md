@@ -72,6 +72,7 @@ Une fois ce setup fait, les updates de `api` et `mail-worker` se font via `git p
 Notes:
 
 - Les workflows n8n restent montes depuis le NAS (`n8n/workflows`) et doivent etre importes/geres cote n8n.
+- Les documents client sont exposes dans le dossier DSM `${DOCUMENTS_SHARE_HOST_PATH:-/volume1/Professionnel_CCM/12_AUTOMATISATION/documents}` (`archive/originals` pour les PDF recus, `classified` pour les copies classees).
 - Rollback rapide: fixer `AUTOMATISATIONS_IMAGE` dans `.env` sur un tag SHA publie par GHCR, puis relancer `docker compose ... up -d`.
 
 ## CLI workers
